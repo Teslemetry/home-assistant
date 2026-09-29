@@ -11,7 +11,13 @@ from syrupy.assertion import SnapshotAssertion
 from teslemetry_stream import Signal
 
 from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
-from homeassistant.components.teslemetry.update import INSTALLING, SCHEDULED_STALE_AFTER
+from homeassistant.components.teslemetry.update import (
+    ATTR_DOWNLOAD_PERCENTAGE,
+    ATTR_INSTALL_PERCENTAGE,
+    ATTR_SCHEDULED_AT,
+    INSTALLING,
+    SCHEDULED_STALE_AFTER,
+)
 from homeassistant.components.update import DOMAIN as UPDATE_DOMAIN, SERVICE_INSTALL
 from homeassistant.const import ATTR_ENTITY_ID, STATE_ON, Platform
 from homeassistant.core import HomeAssistant, State
@@ -396,9 +402,9 @@ async def test_update_streaming_restore_real_progress_survives_stream_event(
                     },
                 ),
                 {
-                    "scheduled_at": None,
-                    "download_percentage": 42,
-                    "install_percentage": 0,
+                    ATTR_SCHEDULED_AT: None,
+                    ATTR_DOWNLOAD_PERCENTAGE: 42,
+                    ATTR_INSTALL_PERCENTAGE: 0,
                 },
             ),
         ),
@@ -473,9 +479,9 @@ async def test_update_streaming_restore_current_schedule_expires(
                     },
                 ),
                 {
-                    "scheduled_at": dt_util.utcnow().isoformat(),
-                    "download_percentage": download_percentage,
-                    "install_percentage": 0,
+                    ATTR_SCHEDULED_AT: dt_util.utcnow().isoformat(),
+                    ATTR_DOWNLOAD_PERCENTAGE: download_percentage,
+                    ATTR_INSTALL_PERCENTAGE: 0,
                 },
             ),
         ),
@@ -510,11 +516,11 @@ async def test_update_streaming_restore_current_schedule_expires(
     [
         pytest.param(
             {
-                "scheduled_at": (
+                ATTR_SCHEDULED_AT: (
                     dt_util.utcnow() - SCHEDULED_STALE_AFTER - timedelta(hours=1)
                 ).isoformat(),
-                "download_percentage": 0,
-                "install_percentage": 0,
+                ATTR_DOWNLOAD_PERCENTAGE: 0,
+                ATTR_INSTALL_PERCENTAGE: 0,
             },
             id="expired",
         ),
@@ -588,9 +594,9 @@ async def test_update_streaming_extra_data_saved(
         if entry["state"]["entity_id"] == "update.test_update"
     )
     assert stored["extra_data"] == {
-        "scheduled_at": "2025-01-01T00:00:00+00:00",
-        "download_percentage": 42,
-        "install_percentage": 0,
+        ATTR_SCHEDULED_AT: "2025-01-01T00:00:00+00:00",
+        ATTR_DOWNLOAD_PERCENTAGE: 42,
+        ATTR_INSTALL_PERCENTAGE: 0,
     }
 
 
