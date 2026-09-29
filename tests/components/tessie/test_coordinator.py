@@ -36,6 +36,7 @@ from .common import (
 from tests.common import async_fire_time_changed
 
 WAIT = timedelta(seconds=TESSIE_SYNC_INTERVAL)
+RETRY_AFTER = timedelta(seconds=300)
 
 
 async def test_coordinator_online(
@@ -126,7 +127,7 @@ async def test_coordinator_rate_limited(
     await setup_platform(hass, [Platform.SENSOR])
 
     mock.reset_mock()
-    mock.side_effect = RateLimited({"after": "300"})
+    mock.side_effect = RateLimited({"after": str(RETRY_AFTER.seconds)})
     freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
@@ -139,7 +140,7 @@ async def test_coordinator_rate_limited(
     await hass.async_block_till_done()
     mock.assert_called_once()
 
-    freezer.tick(timedelta(seconds=300) - interval)
+    freezer.tick(RETRY_AFTER - interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert mock.call_count == 2
