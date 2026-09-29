@@ -168,12 +168,11 @@ async def test_energy_first_refresh_timeout(hass: HomeAssistant) -> None:
     # reaches the bounded gather instead of hanging on the inline live_status() call.
     with (
         patch("tesla_fleet_api.tessie.EnergySite.site_info", side_effect=_hang),
-        patch("homeassistant.components.tessie.FIRST_REFRESH_TIMEOUT", 0),
+        patch("homeassistant.components.tessie.FIRST_REFRESH_TIMEOUT", 0.1),
     ):
         entry = await setup_platform(hass)
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
-    never.set()
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
