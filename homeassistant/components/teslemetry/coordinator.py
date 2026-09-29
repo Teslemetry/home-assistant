@@ -49,9 +49,8 @@ def _get_retry_after(e: TeslaFleetError) -> float:
 VEHICLE_INTERVAL = timedelta(seconds=60)
 VEHICLE_WAIT = timedelta(minutes=15)
 
-# Kept well under Home Assistant's stage-2 setup budget (SLOW_SETUP_MAX_WAIT, 300s)
-# so a sleeping vehicle raises ConfigEntryNotReady and the entry retries instead of
-# being cancelled into a non-retried setup error.
+# Well under the bootstrap STAGE_2_TIMEOUT (300s), so a sleeping vehicle retries setup
+# instead of being cancelled into a setup error that is never retried.
 VEHICLE_FIRST_REFRESH_TIMEOUT = 60
 METADATA_INTERVAL = timedelta(hours=1)
 

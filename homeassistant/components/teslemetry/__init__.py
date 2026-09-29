@@ -1,7 +1,7 @@
 """Teslemetry integration."""
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any, Final, cast
@@ -595,31 +595,6 @@ async def _async_vehicle_first_refresh(vehicle: TeslemetryVehicleData) -> None:
         ) from err
 
 
-async def _async_gather_first_refreshes(
-    *coros: Coroutine[Any, Any, Any],
-) -> None:
-    """Run first-refresh coroutines concurrently, cancelling siblings on failure.
-
-    asyncio.gather without return_exceptions propagates the first exception but
-    leaves the other awaitables running. A timed-out vehicle refresh must not
-    leave an energy site refresh running in the background, so this cancels and
-    awaits the rest before the failure propagates. Unlike
-    asyncio.wait(return_when=FIRST_EXCEPTION), which ignores a cancelled task,
-    asyncio.gather resolves as soon as any task is cancelled or raises, so a
-    cancelled sibling still triggers cleanup promptly.
-    """
-    tasks = [asyncio.ensure_future(coro) for coro in coros]
-    if not tasks:
-        return
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -> bool:
     """Set up Teslemetry config."""
 
@@ -844,20 +819,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                 )
             )
 
-    # Run all first refreshes
-    await _async_gather_first_refreshes(
+    # Run all first refreshes; a failure cancels the rest so none outlive the entry
+    tasks = [
         *(
-            async_setup_stream(hass, entry, vehicle)
+            asyncio.create_task(async_setup_stream(hass, entry, vehicle))
             for vehicle in vehicles
             if not vehicle.poll
         ),
         *(
-            _async_vehicle_first_refresh(vehicle)
+            asyncio.create_task(_async_vehicle_first_refresh(vehicle))
             for vehicle in vehicles
             if vehicle.poll
         ),
-        *(_async_refresh_energy_site(energysite) for energysite in energysites),
-    )
+        *(
+            asyncio.create_task(_async_refresh_energy_site(energysite))
+            for energysite in energysites
+        ),
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     # Setup energy devices with models, versions, and listeners
     for energysite in energysites:

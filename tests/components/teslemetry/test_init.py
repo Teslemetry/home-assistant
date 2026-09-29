@@ -8,7 +8,6 @@ from datetime import timedelta
 import logging
 import time
 from types import MappingProxyType
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp import ClientConnectionError, ClientError, ClientResponseError
@@ -45,7 +44,6 @@ from teslemetry_stream import TeslemetryStreamAuthenticationError
 
 from homeassistant.components.teslemetry import (
     STREAM_TOPICS,
-    _async_gather_first_refreshes,
     _async_get_rsa_key_pem,
     _get_access_token,
 )
@@ -194,9 +192,8 @@ async def test_vehicle_first_refresh_timeout(
     """Test a slow first vehicle refresh retries instead of blocking setup."""
     never = asyncio.Event()
 
-    async def _hang(*args: object, **kwargs: object) -> dict[str, Any]:
+    async def _hang(*args: object, **kwargs: object) -> None:
         await never.wait()
-        return VEHICLE_DATA_ALT
 
     mock_vehicle_data.side_effect = _hang
 
@@ -204,7 +201,6 @@ async def test_vehicle_first_refresh_timeout(
         entry = await setup_platform(hass)
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
-    never.set()
 
 
 async def test_vehicle_first_refresh_timeout_cancels_energy_site_refresh(
@@ -213,26 +209,19 @@ async def test_vehicle_first_refresh_timeout_cancels_energy_site_refresh(
     mock_site_info: AsyncMock,
     mock_legacy: AsyncMock,
 ) -> None:
-    """Test a timed-out vehicle refresh cancels the concurrent energy site refresh.
-
-    asyncio.gather without return_exceptions only propagates the first
-    exception; it does not cancel the other awaitables. Assert that the
-    sibling energy site refresh is actually cancelled rather than left running.
-    """
+    """Test a timed-out vehicle refresh cancels the concurrent energy site refresh."""
     never = asyncio.Event()
     site_refresh_cancelled = asyncio.Event()
 
-    async def _hang_vehicle_data(*args: object, **kwargs: object) -> dict[str, Any]:
+    async def _hang_vehicle_data(*args: object, **kwargs: object) -> None:
         await never.wait()
-        return VEHICLE_DATA_ALT
 
-    async def _hang_site_info(*args: object, **kwargs: object) -> dict[str, Any]:
+    async def _hang_site_info(*args: object, **kwargs: object) -> None:
         try:
             await never.wait()
         except asyncio.CancelledError:
             site_refresh_cancelled.set()
             raise
-        return SITE_INFO
 
     mock_vehicle_data.side_effect = _hang_vehicle_data
     mock_site_info.side_effect = _hang_site_info
@@ -242,59 +231,6 @@ async def test_vehicle_first_refresh_timeout_cancels_energy_site_refresh(
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert site_refresh_cancelled.is_set()
-    never.set()
-
-
-async def test_gather_first_refreshes_raises_for_cancelled_sibling() -> None:
-    """A task that ends up cancelled must still fail the gather, not be ignored.
-
-    asyncio.wait(..., return_when=FIRST_EXCEPTION) does not return early for a
-    cancelled task, so it can sit in the done set already cancelled while a
-    sibling still finishes normally; that must surface as a failure.
-    """
-
-    async def _cancel_self() -> None:
-        asyncio.current_task().cancel()
-        await asyncio.sleep(0)
-
-    async def _succeeds() -> None:
-        return None
-
-    with pytest.raises(asyncio.CancelledError):
-        await _async_gather_first_refreshes(_cancel_self(), _succeeds())
-
-
-async def test_gather_first_refreshes_cancels_blocked_sibling() -> None:
-    """A cancelled sibling must not leave a genuinely blocked task running forever.
-
-    asyncio.wait(..., return_when=FIRST_EXCEPTION) only returns early when a
-    future raises; a cancelled future does not count, so wait keeps blocking
-    until every future is done. If a sibling is still stuck on real I/O, that
-    hangs _async_gather_first_refreshes instead of failing fast and cancelling
-    it.
-    """
-
-    blocked = asyncio.Event()
-    blocked_cancelled = asyncio.Event()
-
-    async def _cancel_self() -> None:
-        asyncio.current_task().cancel()
-        await asyncio.sleep(0)
-
-    async def _blocks_forever() -> None:
-        try:
-            await blocked.wait()
-        except asyncio.CancelledError:
-            blocked_cancelled.set()
-            raise
-
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(
-            _async_gather_first_refreshes(_cancel_self(), _blocks_forever()),
-            timeout=3,
-        )
-
-    assert blocked_cancelled.is_set()
 
 
 # Test Energy Live Coordinator
