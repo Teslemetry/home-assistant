@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
@@ -15,6 +16,7 @@ from homeassistant.components.update import DOMAIN as UPDATE_DOMAIN, SERVICE_INS
 from homeassistant.const import ATTR_ENTITY_ID, STATE_ON, Platform
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.restore_state import STORAGE_KEY as RESTORE_STATE_KEY
 from homeassistant.util import dt as dt_util
 
 from . import assert_entities, reload_platform, setup_platform
@@ -22,6 +24,7 @@ from .const import COMMAND_OK, VEHICLE_DATA, VEHICLE_DATA_ALT
 
 from tests.common import (
     async_fire_time_changed,
+    async_mock_restore_state_shutdown_restart,
     mock_restore_cache,
     mock_restore_cache_with_extra_data,
 )
@@ -256,13 +259,24 @@ async def test_update_streaming_scheduled_not_clobbered(
     assert state == snapshot(name="downloading_after_schedule_cleared")
 
 
-async def test_update_streaming_scheduled_expires(
+@pytest.mark.parametrize(
+    ("elapsed", "in_progress"),
+    [
+        pytest.param(SCHEDULED_STALE_AFTER + timedelta(seconds=1), False, id="expired"),
+        pytest.param(
+            SCHEDULED_STALE_AFTER - timedelta(minutes=1), True, id="not_yet_stale"
+        ),
+    ],
+)
+async def test_update_streaming_scheduled_expiry(
     hass: HomeAssistant,
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
     freezer: FrozenDateTimeFactory,
+    elapsed: timedelta,
+    in_progress: bool,
 ) -> None:
-    """Test a scheduled install self-clears once stale, with no clearing push."""
+    """Test a scheduled install self-clears only once stale, with no clearing push."""
 
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     await setup_platform(hass, [Platform.UPDATE])
@@ -282,45 +296,12 @@ async def test_update_streaming_scheduled_expires(
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is True
 
-    freezer.tick(SCHEDULED_STALE_AFTER + timedelta(seconds=1))
+    freezer.tick(elapsed)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
 
     state = hass.states.get("update.test_update")
-    assert state.attributes["in_progress"] is False
-    assert state.attributes["update_percentage"] is None
-
-
-async def test_update_streaming_scheduled_not_yet_stale(
-    hass: HomeAssistant,
-    mock_vehicle_data: AsyncMock,
-    mock_add_listener: AsyncMock,
-    freezer: FrozenDateTimeFactory,
-) -> None:
-    """Test a genuinely current schedule still reports in progress."""
-
-    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
-    await setup_platform(hass, [Platform.UPDATE])
-
-    mock_add_listener.send(
-        {
-            "vin": VEHICLE_DATA_ALT["response"]["vin"],
-            "data": {
-                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
-            },
-            "createdAt": "2024-10-04T10:45:17.537Z",
-        }
-    )
-    await hass.async_block_till_done()
-
-    freezer.tick(SCHEDULED_STALE_AFTER - timedelta(minutes=1))
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-
-    state = hass.states.get("update.test_update")
-    assert state.attributes["in_progress"] is True
+    assert state.attributes["in_progress"] is in_progress
     assert state.attributes["update_percentage"] is None
 
 
@@ -396,13 +377,7 @@ async def test_update_streaming_restore_real_progress_survives_stream_event(
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
 ) -> None:
-    """Test a restored genuine in-progress download is not cleared by the next stream event.
-
-    Reproduces a restart during a real download: only update_percentage is part
-    of the restored entity state, so without persisting download/install
-    percentage too, the next stream event recomputed progress from zeroed
-    percentages and wrongly cleared in_progress.
-    """
+    """Test a restored genuine in-progress download is not cleared by the next stream event."""
 
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     entity_id = "update.test_update"
@@ -453,11 +428,105 @@ async def test_update_streaming_restore_real_progress_survives_stream_event(
     assert state.attributes["update_percentage"] == 42
 
 
-async def test_update_streaming_restore_scheduled_expired(
+@pytest.mark.parametrize(
+    ("update_percentage", "download_percentage", "data"),
+    [
+        pytest.param(
+            None,
+            0,
+            {Signal.VERSION: "2025.1.1"},
+            id="scheduled_latch",
+        ),
+        pytest.param(
+            42,
+            42,
+            {Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 100},
+            id="download_then_scheduled_latch",
+        ),
+    ],
+)
+async def test_update_streaming_restore_current_schedule_expires(
     hass: HomeAssistant,
     mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+    update_percentage: int | None,
+    download_percentage: int,
+    data: dict[Signal, str | int],
 ) -> None:
-    """Test a persisted latched state with an expired schedule restores NOT in progress."""
+    """Test a restored current schedule re-arms its expiry."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    entity_id = "update.test_update"
+    mock_restore_cache_with_extra_data(
+        hass,
+        (
+            (
+                State(
+                    entity_id,
+                    STATE_ON,
+                    attributes={
+                        "in_progress": True,
+                        "update_percentage": update_percentage,
+                        "installed_version": "2025.1.1",
+                        "latest_version": "2025.2.1",
+                    },
+                ),
+                {
+                    "scheduled_at": dt_util.utcnow().isoformat(),
+                    "download_percentage": download_percentage,
+                    "install_percentage": 0,
+                },
+            ),
+        ),
+    )
+
+    await setup_platform(hass, [Platform.UPDATE])
+
+    # Leaves only the scheduled latch holding in_progress.
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": data,
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state.attributes["in_progress"] is True
+    assert state.attributes["update_percentage"] is None
+
+    freezer.tick(SCHEDULED_STALE_AFTER + timedelta(seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state.attributes["in_progress"] is False
+    assert state.attributes["update_percentage"] is None
+
+
+@pytest.mark.parametrize(
+    "extra_data",
+    [
+        pytest.param(
+            {
+                "scheduled_at": (
+                    dt_util.utcnow() - SCHEDULED_STALE_AFTER - timedelta(hours=1)
+                ).isoformat(),
+                "download_percentage": 0,
+                "install_percentage": 0,
+            },
+            id="expired",
+        ),
+        pytest.param({}, id="never_recorded"),
+    ],
+)
+async def test_update_streaming_restore_scheduled_stale(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    extra_data: dict[str, str | int],
+) -> None:
+    """Test a latched state without a current schedule restores not in progress."""
 
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     entity_id = "update.test_update"
@@ -475,11 +544,7 @@ async def test_update_streaming_restore_scheduled_expired(
                         "latest_version": "",
                     },
                 ),
-                {
-                    "scheduled_at": (
-                        dt_util.utcnow() - SCHEDULED_STALE_AFTER - timedelta(hours=1)
-                    ).isoformat()
-                },
+                extra_data,
             ),
         ),
     )
@@ -491,40 +556,42 @@ async def test_update_streaming_restore_scheduled_expired(
     assert state.attributes["update_percentage"] is None
 
 
-async def test_update_streaming_restore_scheduled_never_recorded(
+async def test_update_streaming_extra_data_saved(
     hass: HomeAssistant,
+    hass_storage: dict[str, Any],
     mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
-    """Test a persisted latched state with no scheduled timestamp on record self-heals.
+    """Test the scheduled time and percentages are saved for restore."""
 
-    Reproduces the live stuck-vehicle case: entities latched before this guard
-    existed have no persisted scheduled_at, so there is no evidence the schedule
-    is still current.
-    """
-
+    freezer.move_to("2025-01-01T00:00:00+00:00")
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
-    entity_id = "update.test_update"
-    mock_restore_cache(
-        hass,
-        (
-            State(
-                entity_id,
-                STATE_ON,
-                attributes={
-                    "in_progress": True,
-                    "update_percentage": None,
-                    "installed_version": "2025.1.1",
-                    "latest_version": "",
-                },
-            ),
-        ),
-    )
-
     await setup_platform(hass, [Platform.UPDATE])
 
-    state = hass.states.get(entity_id)
-    assert state.attributes["in_progress"] is False
-    assert state.attributes["update_percentage"] is None
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {
+                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 42,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    await async_mock_restore_state_shutdown_restart(hass)
+
+    stored = next(
+        entry
+        for entry in hass_storage[RESTORE_STATE_KEY]["data"]
+        if entry["state"]["entity_id"] == "update.test_update"
+    )
+    assert stored["extra_data"] == {
+        "scheduled_at": "2025-01-01T00:00:00+00:00",
+        "download_percentage": 42,
+        "install_percentage": 0,
+    }
 
 
 async def test_update_streaming_completed_while_scheduled(
