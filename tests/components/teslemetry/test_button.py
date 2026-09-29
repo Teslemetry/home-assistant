@@ -1,7 +1,6 @@
 """Test the Teslemetry button platform."""
 
 from copy import deepcopy
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -62,8 +61,8 @@ async def test_press(
     hass: HomeAssistant,
     name: str,
     func: str,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
+    args: tuple[bool | int, ...],
+    kwargs: dict[str, float],
 ) -> None:
     """Test pressing the API buttons."""
     await setup_platform(hass, [Platform.BUTTON])
@@ -102,6 +101,8 @@ async def test_keep_accessory_power_firmware_gate(
 
     await setup_platform(hass, [Platform.BUTTON])
 
+    # An ungated button proves setup ran, so a missing gated button is the gate.
+    assert hass.states.get("button.test_wake") is not None
     assert (
         hass.states.get("button.test_enable_keep_accessory_power") is not None
     ) == expected
