@@ -40,7 +40,7 @@ def _get_retry_after(err: RateLimited) -> float | None:
     if isinstance(err.data, dict) and (after := err.data.get("after")) is not None:
         try:
             value = float(after)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         if math.isfinite(value) and value >= 0:
             return value
