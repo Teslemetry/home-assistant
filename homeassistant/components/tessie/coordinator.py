@@ -41,7 +41,7 @@ def _get_retry_after(err: RateLimited) -> float | None:
         return None
     try:
         value = float(after)
-    except TypeError, ValueError:
+    except ValueError:
         return None
     return value if math.isfinite(value) and value >= 0 else None
 
