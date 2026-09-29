@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 from datetime import timedelta
-from unittest.mock import AsyncMock
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
@@ -104,54 +103,77 @@ async def test_coordinator_connection(
     assert coordinator.last_exception.translation_key == "cannot_connect"
 
 
-async def test_coordinator_state_rate_limited(
-    hass: HomeAssistant, mock_get_state: AsyncMock, freezer: FrozenDateTimeFactory
+@pytest.mark.parametrize(
+    ("mock_fixture", "interval"),
+    [
+        ("mock_get_state", WAIT),
+        ("mock_live_status", TESSIE_FLEET_API_SYNC_INTERVAL),
+        ("mock_site_info", TESSIE_FLEET_API_SYNC_INTERVAL),
+        ("mock_energy_history", TESSIE_ENERGY_HISTORY_INTERVAL),
+    ],
+    ids=["state", "live", "info", "history"],
+)
+async def test_coordinator_rate_limited(
+    hass: HomeAssistant,
+    mock_fixture: str,
+    interval: timedelta,
+    request: pytest.FixtureRequest,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
-    """Tests that a 429 with Retry-After backs off the state coordinator."""
+    """Tests that a 429 with Retry-After defers the next refresh of each coordinator."""
 
-    entry = await setup_platform(hass, [Platform.BINARY_SENSOR])
-    coordinator = entry.runtime_data.vehicles[0].data_coordinator
+    mock = request.getfixturevalue(mock_fixture)
+    await setup_platform(hass, [Platform.SENSOR])
 
-    mock_get_state.reset_mock()
-    mock_get_state.side_effect = RateLimited({"after": "30"})
-    freezer.tick(WAIT)
+    mock.reset_mock()
+    mock.side_effect = RateLimited({"after": "300"})
+    freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    mock_get_state.assert_called_once()
-    assert isinstance(coordinator.last_exception, UpdateFailed)
-    assert coordinator.last_exception.retry_after == 30
+    mock.assert_called_once()
 
-    # The normal sync interval has not yet elapsed since the rate limit hit,
-    # so the coordinator should still be waiting on the Retry-After backoff.
-    mock_get_state.side_effect = None
-    freezer.tick(WAIT)
+    # The normal interval elapsing again must not refresh inside the Retry-After window.
+    mock.side_effect = None
+    freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    mock_get_state.assert_called_once()
+    mock.assert_called_once()
 
-    # Once the Retry-After window elapses, the coordinator refreshes again.
-    freezer.tick(timedelta(seconds=30) - WAIT)
+    freezer.tick(timedelta(seconds=300) - interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    assert mock_get_state.call_count == 2
+    assert mock.call_count == 2
 
 
 @pytest.mark.parametrize(
-    ("after", "expected"),
+    ("data", "expected"),
     [
-        ("30", 30.0),
-        ("-5", None),
-        ("nan", None),
-        ("inf", None),
-        ("-inf", None),
-        ("not-a-number", None),
+        ({"after": "30"}, 30.0),
+        ({"after": None}, None),
+        ({"after": "-5"}, None),
+        ({"after": "nan"}, None),
+        ({"after": "inf"}, None),
+        ({"after": "-inf"}, None),
+        ({"after": "Wed, 21 Oct 2026 07:28:00 GMT"}, None),
+        (None, None),
     ],
-    ids=["valid", "negative", "nan", "inf", "neg-inf", "unparsable"],
+    ids=[
+        "valid",
+        "no-header",
+        "negative",
+        "nan",
+        "inf",
+        "neg-inf",
+        "http-date",
+        "no-data",
+    ],
 )
-def test_get_retry_after(after: str, expected: float | None) -> None:
-    """Tests that _get_retry_after rejects negative and non-finite values."""
+def test_get_retry_after(
+    data: dict[str, str | None] | None, expected: float | None
+) -> None:
+    """Tests that _get_retry_after only accepts finite, non-negative delays."""
 
-    assert _get_retry_after(RateLimited({"after": after})) == expected
+    assert _get_retry_after(RateLimited(data)) == expected
 
 
 async def test_coordinator_live_error(
@@ -173,39 +195,6 @@ async def test_coordinator_live_error(
     assert isinstance(coordinator.last_exception, UpdateFailed)
     assert coordinator.last_exception.translation_domain == DOMAIN
     assert coordinator.last_exception.translation_key == "cannot_connect"
-
-
-async def test_coordinator_live_rate_limited(
-    hass: HomeAssistant, mock_live_status: AsyncMock, freezer: FrozenDateTimeFactory
-) -> None:
-    """Tests that a 429 with Retry-After backs off the energy live coordinator."""
-
-    entry = await setup_platform(hass, [Platform.SENSOR])
-    coordinator = entry.runtime_data.energysites[0].live_coordinator
-    assert coordinator is not None
-
-    mock_live_status.reset_mock()
-    mock_live_status.side_effect = RateLimited({"after": "45"})
-    freezer.tick(TESSIE_FLEET_API_SYNC_INTERVAL)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    mock_live_status.assert_called_once()
-    assert isinstance(coordinator.last_exception, UpdateFailed)
-    assert coordinator.last_exception.retry_after == 45
-
-    # The normal sync interval has not yet elapsed since the rate limit hit,
-    # so the coordinator should still be waiting on the Retry-After backoff.
-    mock_live_status.side_effect = None
-    freezer.tick(TESSIE_FLEET_API_SYNC_INTERVAL)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    mock_live_status.assert_called_once()
-
-    # Once the Retry-After window elapses, the coordinator refreshes again.
-    freezer.tick(timedelta(seconds=45) - TESSIE_FLEET_API_SYNC_INTERVAL)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    assert mock_live_status.call_count == 2
 
 
 async def test_coordinator_info_error(

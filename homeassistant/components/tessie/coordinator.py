@@ -37,15 +37,13 @@ _LOGGER = logging.getLogger(__name__)
 
 def _get_retry_after(err: RateLimited) -> float | None:
     """Return the Retry-After hint in seconds, if the server provided one."""
-    if isinstance(err.data, dict) and (after := err.data.get("after")) is not None:
-        try:
-            value = float(after)
-        except TypeError, ValueError:
-            return None
-        if math.isfinite(value) and value >= 0:
-            return value
+    if not isinstance(err.data, dict) or (after := err.data.get("after")) is None:
         return None
-    return None
+    try:
+        value = float(after)
+    except TypeError, ValueError:
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
 
 
 def flatten(data: dict[str, Any], parent: str | None = None) -> dict[str, Any]:
