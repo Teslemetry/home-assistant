@@ -273,6 +273,7 @@ class TeslemetryStreamingClimateEntity(
         self._attr_target_temperature = None
         self._attr_fan_mode = None
         self._attr_preset_mode = None
+        self._ac_enabled: bool | None = None
 
         self.scoped = Scope.VEHICLE_CMDS in scopes
         if not self.scoped:
@@ -301,6 +302,9 @@ class TeslemetryStreamingClimateEntity(
             self._attr_hvac_mode = (
                 HVACMode(state.state) if state.state in HVAC_MODES else None
             )
+            if self._attr_hvac_mode == HVACMode.FAN_ONLY:
+                self._attr_hvac_mode = HVACMode.HEAT_COOL
+                self._ac_enabled = False
             self._attr_current_temperature = state.attributes.get(
                 ClimateEntityStateAttribute.CURRENT_TEMPERATURE
             )
@@ -318,6 +322,11 @@ class TeslemetryStreamingClimateEntity(
         )
         self.async_on_remove(
             self.vehicle.stream_vehicle.listen_HvacPower(self._async_handle_hvac_power)
+        )
+        self.async_on_remove(
+            self.vehicle.stream_vehicle.listen_HvacACEnabled(
+                self._async_handle_hvac_ac_enabled
+            )
         )
         self.async_on_remove(
             self.vehicle.stream_vehicle.listen_ClimateKeeperMode(
@@ -356,6 +365,15 @@ class TeslemetryStreamingClimateEntity(
         self._attr_current_temperature = data
         self.async_write_ha_state()
 
+    @property
+    @override
+    def hvac_mode(self) -> HVACMode | None:
+        """Return the HVAC mode, which is fan only while climate runs without A/C."""
+        # Tesla has no command to toggle A/C, so fan only is reported but not settable
+        if self._attr_hvac_mode == HVACMode.HEAT_COOL and self._ac_enabled is False:
+            return HVACMode.FAN_ONLY
+        return self._attr_hvac_mode
+
     def _async_handle_hvac_power(self, data: str | None) -> None:
         self._attr_hvac_mode = (
             None
@@ -364,6 +382,10 @@ class TeslemetryStreamingClimateEntity(
             if data in {"On", "Precondition"}
             else HVACMode.OFF
         )
+        self.async_write_ha_state()
+
+    def _async_handle_hvac_ac_enabled(self, data: bool | None) -> None:
+        self._ac_enabled = data
         self.async_write_ha_state()
 
     def _async_handle_climate_keeper_mode(self, data: str | None) -> None:
