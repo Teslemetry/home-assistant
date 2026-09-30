@@ -266,11 +266,31 @@ async def test_update_streaming_scheduled_not_clobbered(
 
 
 @pytest.mark.parametrize(
-    ("elapsed", "in_progress"),
+    ("percentages", "elapsed", "in_progress"),
     [
-        pytest.param(SCHEDULED_STALE_AFTER + timedelta(seconds=1), False, id="expired"),
         pytest.param(
-            SCHEDULED_STALE_AFTER - timedelta(minutes=1), True, id="not_yet_stale"
+            {
+                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
+                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
+            },
+            SCHEDULED_STALE_AFTER + timedelta(seconds=1),
+            False,
+            id="expired",
+        ),
+        pytest.param(
+            {
+                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
+                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
+            },
+            SCHEDULED_STALE_AFTER - timedelta(minutes=1),
+            True,
+            id="not_yet_stale",
+        ),
+        pytest.param(
+            {},
+            SCHEDULED_STALE_AFTER + timedelta(seconds=1),
+            False,
+            id="expired_before_any_percentage",
         ),
     ],
 )
@@ -279,6 +299,7 @@ async def test_update_streaming_scheduled_expiry(
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
     freezer: FrozenDateTimeFactory,
+    percentages: dict[Signal, None],
     elapsed: timedelta,
     in_progress: bool,
 ) -> None:
@@ -291,9 +312,10 @@ async def test_update_streaming_scheduled_expiry(
         {
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
             "data": {
-                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
+                **percentages,
                 Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
+                Signal.VERSION: "2025.1.1",
             },
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
@@ -308,6 +330,58 @@ async def test_update_streaming_scheduled_expiry(
 
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is in_progress
+    assert state.attributes["update_percentage"] is None
+
+
+async def test_update_streaming_scheduled_expiry_restarts(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a repeated schedule push restarts the staleness window."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    await setup_platform(hass, [Platform.UPDATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {
+                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
+                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
+                Signal.VERSION: "2025.1.1",
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    freezer.tick(timedelta(days=1))
+    async_fire_time_changed(hass)
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735776000},
+            "createdAt": "2024-10-05T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    # Past the first push's deadline, inside the second's.
+    freezer.tick(timedelta(days=1, minutes=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is True
+
+    freezer.tick(timedelta(days=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is False
     assert state.attributes["update_percentage"] is None
 
 
@@ -382,7 +456,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
     (
         "attributes",
         "extra_data",
-        "version",
+        "data",
         "expected_restored",
         "expected_after",
     ),
@@ -394,8 +468,12 @@ async def test_update_streaming_restore_completed_not_in_progress(
                 "installed_version": "2025.1.1",
                 "latest_version": "2025.2.1",
             },
-            {ATTR_DOWNLOAD_PERCENTAGE: 42, ATTR_INSTALL_PERCENTAGE: 0},
-            "2025.1.1",
+            {
+                ATTR_SCHEDULED_AT: None,
+                ATTR_DOWNLOAD_PERCENTAGE: 42,
+                ATTR_INSTALL_PERCENTAGE: 0,
+            },
+            {Signal.VERSION: "2025.1.1"},
             (True, 42),
             (True, 42),
             id="download_in_progress",
@@ -407,8 +485,12 @@ async def test_update_streaming_restore_completed_not_in_progress(
                 "installed_version": "2025.2.1",
                 "latest_version": "2025.2.1",
             },
-            {ATTR_DOWNLOAD_PERCENTAGE: 100, ATTR_INSTALL_PERCENTAGE: 50},
-            "2025.2.1",
+            {
+                ATTR_SCHEDULED_AT: None,
+                ATTR_DOWNLOAD_PERCENTAGE: 100,
+                ATTR_INSTALL_PERCENTAGE: 50,
+            },
+            {Signal.VERSION: "2025.2.1"},
             (False, None),
             (False, None),
             id="up_to_date_mid_install_leftover",
@@ -420,11 +502,75 @@ async def test_update_streaming_restore_completed_not_in_progress(
                 "installed_version": "2025.1.1",
                 "latest_version": "2025.2.1",
             },
-            {ATTR_DOWNLOAD_PERCENTAGE: 100, ATTR_INSTALL_PERCENTAGE: 50},
-            "2025.2.1",
+            {
+                ATTR_SCHEDULED_AT: None,
+                ATTR_DOWNLOAD_PERCENTAGE: 100,
+                ATTR_INSTALL_PERCENTAGE: 50,
+            },
+            {Signal.VERSION: "2025.2.1"},
             (True, 50),
             (False, None),
             id="install_finished_offline",
+        ),
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 42,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {
+                ATTR_SCHEDULED_AT: None,
+                ATTR_DOWNLOAD_PERCENTAGE: 42,
+                ATTR_INSTALL_PERCENTAGE: 0,
+            },
+            {Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 100},
+            (True, 42),
+            (False, None),
+            id="download_finished_without_schedule",
+        ),
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 42,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {},
+            {Signal.VERSION: "2025.1.1"},
+            (True, 42),
+            (True, 42),
+            id="progress_without_extra_data",
+        ),
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 42,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {
+                ATTR_SCHEDULED_AT: None,
+                ATTR_DOWNLOAD_PERCENTAGE: None,
+                ATTR_INSTALL_PERCENTAGE: None,
+            },
+            {Signal.VERSION: "2025.1.1"},
+            (True, 42),
+            (True, 42),
+            id="progress_with_unknown_percentages",
+        ),
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 42,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {},
+            {Signal.VERSION: "2025.2.1"},
+            (True, 42),
+            (False, None),
+            id="finished_offline_without_extra_data",
         ),
     ],
 )
@@ -432,9 +578,9 @@ async def test_update_streaming_restore_progress_then_stream_event(
     hass: HomeAssistant,
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
-    attributes: dict[str, Any],
-    extra_data: dict[str, int],
-    version: str,
+    attributes: dict[str, bool | int | str | None],
+    extra_data: dict[str, int | None],
+    data: dict[Signal, str | int],
     expected_restored: tuple[bool, int | None],
     expected_after: tuple[bool, int | None],
 ) -> None:
@@ -444,12 +590,7 @@ async def test_update_streaming_restore_progress_then_stream_event(
     entity_id = "update.test_update"
     mock_restore_cache_with_extra_data(
         hass,
-        (
-            (
-                State(entity_id, STATE_ON, attributes=attributes),
-                {ATTR_SCHEDULED_AT: None, **extra_data},
-            ),
-        ),
+        ((State(entity_id, STATE_ON, attributes=attributes), extra_data),),
     )
 
     await setup_platform(hass, [Platform.UPDATE])
@@ -460,12 +601,12 @@ async def test_update_streaming_restore_progress_then_stream_event(
         state.attributes["update_percentage"],
     ) == expected_restored
 
-    # A Version push with no download/install signal still recomputes progress,
+    # A push that leaves a percentage untouched still recomputes progress,
     # so it must use the restored percentages only while they still apply.
     mock_add_listener.send(
         {
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
-            "data": {Signal.VERSION: version},
+            "data": data,
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
     )
@@ -595,7 +736,7 @@ async def test_update_streaming_restore_scheduled_stale(
                         "in_progress": True,
                         "update_percentage": None,
                         "installed_version": "2025.1.1",
-                        "latest_version": "",
+                        "latest_version": "2025.2.1",
                     },
                 ),
                 extra_data,
@@ -628,6 +769,7 @@ async def test_update_streaming_extra_data_saved(
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
             "data": {
                 Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 42,
+                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: 0,
                 Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
             },
             "createdAt": "2024-10-04T10:45:17.537Z",

@@ -50,8 +50,8 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
     """Extra stored data for the streaming update entity."""
 
     scheduled_at: datetime | None = None
-    download_percentage: int = 0
-    install_percentage: int = 0
+    download_percentage: int | None = None
+    install_percentage: int | None = None
 
     @override
     def as_dict(self) -> dict[str, Any]:
@@ -186,8 +186,8 @@ class TeslemetryStreamingUpdateEntity(
 ):
     """Teslemetry Updates entity."""
 
-    _download_percentage: int = 0
-    _install_percentage: int = 0
+    _download_percentage: int | None = None
+    _install_percentage: int | None = None
     _scheduled: bool = False
     _scheduled_at: datetime | None = None
     _cancel_scheduled_expiry: CALLBACK_TYPE | None = None
@@ -394,12 +394,22 @@ class TeslemetryStreamingUpdateEntity(
     def _async_update_progress(self) -> None:
         """Update the progress of the update."""
 
-        if 0 < self._download_percentage < 100:
+        download = self._download_percentage
+        install = self._install_percentage
+        # Until a percentage is restored or streamed, a restored progress value
+        # is the only progress known, so a version or schedule push keeps it.
+        if (
+            download is None
+            and install is None
+            and self._attr_update_percentage is not None
+        ):
+            return
+        if download is not None and 0 < download < 100:
             self._attr_in_progress = True
-            self._attr_update_percentage = self._download_percentage
-        elif 10 < self._install_percentage < 100:
+            self._attr_update_percentage = download
+        elif install is not None and 10 < install < 100:
             self._attr_in_progress = True
-            self._attr_update_percentage = self._install_percentage
+            self._attr_update_percentage = install
         elif self._scheduled and not self._up_to_date and not self._scheduled_stale:
             self._attr_in_progress = True
             self._attr_update_percentage = None
