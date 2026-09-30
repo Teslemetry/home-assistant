@@ -157,17 +157,24 @@ async def test_aiohttp_client_error_on_live_status_retries(
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_energy_first_refresh_timeout(hass: HomeAssistant) -> None:
-    """Test a slow energy site first refresh retries instead of blocking setup."""
+@pytest.mark.parametrize(
+    "stalled",
+    [
+        pytest.param("tesla_fleet_api.tessie.Tessie.scopes", id="scopes"),
+        pytest.param("tesla_fleet_api.tessie.Tessie.products", id="products"),
+        pytest.param("tesla_fleet_api.tessie.EnergySite.live_status", id="live_status"),
+        pytest.param("tesla_fleet_api.tessie.EnergySite.site_info", id="site_info"),
+    ],
+)
+async def test_energy_site_setup_timeout(hass: HomeAssistant, stalled: str) -> None:
+    """Test a stalled energy site call retries setup instead of blocking it."""
     never = asyncio.Event()
 
     async def _hang(*args: object, **kwargs: object) -> None:
         await never.wait()
 
-    # site_info() is only awaited by the info coordinator's first refresh, so setup
-    # reaches the bounded gather instead of hanging on the inline live_status() call.
     with (
-        patch("tesla_fleet_api.tessie.EnergySite.site_info", side_effect=_hang),
+        patch(stalled, side_effect=_hang),
         patch("homeassistant.components.tessie.FIRST_REFRESH_TIMEOUT", 0.1),
     ):
         entry = await setup_platform(hass)

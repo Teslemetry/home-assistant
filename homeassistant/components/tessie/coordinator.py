@@ -27,7 +27,7 @@ TESSIE_FLEET_API_SYNC_INTERVAL = timedelta(seconds=30)
 TESSIE_ENERGY_HISTORY_INTERVAL = timedelta(seconds=60)
 
 # Kept well under the bootstrap stage 2 budget (STAGE_2_TIMEOUT, 300s) so a stalled
-# first refresh retries via ConfigEntryNotReady instead of being cancelled.
+# energy site setup retries via ConfigEntryNotReady instead of being cancelled.
 FIRST_REFRESH_TIMEOUT = 60
 
 _LOGGER = logging.getLogger(__name__)
