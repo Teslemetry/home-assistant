@@ -355,6 +355,7 @@ async def test_select_streaming(
             "data": {
                 Signal.INSIDE_TEMP: 26,
                 Signal.HVAC_POWER: "HvacPowerStateOn",
+                Signal.HVAC_AC_ENABLED: True,
                 Signal.CLIMATE_KEEPER_MODE: "ClimateKeeperModeOn",
                 Signal.RIGHT_HAND_DRIVE: True,
                 Signal.HVAC_LEFT_TEMPERATURE_REQUEST: 22,
@@ -493,71 +494,92 @@ async def test_climate_streaming_drive_side(
 
 
 @pytest.mark.parametrize(
-    ("hvac_power", "ac_enabled", "expected", "expected_modes"),
+    ("data", "expected", "expected_modes"),
     [
         pytest.param(
-            "HvacPowerStateOn",
-            True,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOn",
+                Signal.HVAC_AC_ENABLED: True,
+            },
             HVACMode.HEAT_COOL,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
             id="on",
         ),
         pytest.param(
-            "HvacPowerStatePrecondition",
-            True,
+            {
+                Signal.HVAC_POWER: "HvacPowerStatePrecondition",
+                Signal.HVAC_AC_ENABLED: True,
+            },
             HVACMode.HEAT_COOL,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
             id="precondition",
         ),
         pytest.param(
-            "HvacPowerStateOverheatProtect",
-            True,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOverheatProtect",
+                Signal.HVAC_AC_ENABLED: True,
+            },
             HVACMode.OFF,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
             id="overheat",
         ),
         pytest.param(
-            "HvacPowerStateOff",
-            True,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOff",
+                Signal.HVAC_AC_ENABLED: True,
+            },
             HVACMode.OFF,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
             id="off",
         ),
         pytest.param(
-            "HvacPowerStateOn",
-            False,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOn",
+                Signal.HVAC_AC_ENABLED: False,
+            },
             HVACMode.FAN_ONLY,
             [HVACMode.FAN_ONLY, HVACMode.OFF],
             id="on_fan_only",
         ),
         pytest.param(
-            "HvacPowerStatePrecondition",
-            False,
+            {
+                Signal.HVAC_POWER: "HvacPowerStatePrecondition",
+                Signal.HVAC_AC_ENABLED: False,
+            },
             HVACMode.FAN_ONLY,
             [HVACMode.FAN_ONLY, HVACMode.OFF],
             id="precondition_fan_only",
         ),
         pytest.param(
-            "HvacPowerStateOverheatProtect",
-            False,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOverheatProtect",
+                Signal.HVAC_AC_ENABLED: False,
+            },
             HVACMode.OFF,
             [HVACMode.FAN_ONLY, HVACMode.OFF],
             id="overheat_fan_only",
         ),
         pytest.param(
-            "HvacPowerStateOff",
-            False,
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOff",
+                Signal.HVAC_AC_ENABLED: False,
+            },
             HVACMode.OFF,
             [HVACMode.FAN_ONLY, HVACMode.OFF],
             id="off_fan_only",
+        ),
+        pytest.param(
+            {Signal.HVAC_POWER: "HvacPowerStateOn"},
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            id="on_before_any_ac_enabled",
         ),
     ],
 )
 async def test_climate_streaming_hvac_power(
     hass: HomeAssistant,
     mock_add_listener: AsyncMock,
-    hvac_power: str,
-    ac_enabled: bool,
+    data: dict[Signal, str | bool],
     expected: HVACMode,
     expected_modes: list[HVACMode],
 ) -> None:
@@ -568,10 +590,7 @@ async def test_climate_streaming_hvac_power(
     mock_add_listener.send(
         {
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
-            "data": {
-                Signal.HVAC_POWER: hvac_power,
-                Signal.HVAC_AC_ENABLED: ac_enabled,
-            },
+            "data": data,
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
     )
@@ -709,7 +728,7 @@ async def test_climate_streaming_hvac_ac_enabled_changes(
 
     for data, expected, expected_modes in (
         (
-            {Signal.HVAC_POWER: "HvacPowerStateOn"},
+            {Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True},
             HVACMode.HEAT_COOL,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
         ),
