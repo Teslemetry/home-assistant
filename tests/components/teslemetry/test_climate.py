@@ -978,6 +978,12 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
             [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
             id="ac_null_before_any_ac_enabled_defaults_to_ac_enabled",
         ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: None}],
+            [(HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="ac_disabled_to_on_with_ac_null_keeps_ac_disabled",
+        ),
     ],
 )
 async def test_climate_streaming_hvac_states_written(
