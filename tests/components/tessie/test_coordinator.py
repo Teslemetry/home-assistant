@@ -18,7 +18,6 @@ from homeassistant.components.tessie.coordinator import (
     TESSIE_ENERGY_HISTORY_INTERVAL,
     TESSIE_FLEET_API_SYNC_INTERVAL,
     TESSIE_SYNC_INTERVAL,
-    _get_retry_after,
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN, Platform
@@ -114,67 +113,51 @@ async def test_coordinator_connection(
     ],
     ids=["state", "live", "info", "history"],
 )
+@pytest.mark.parametrize(
+    ("after", "calls_at_interval", "calls_at_retry_after"),
+    [
+        pytest.param(str(RETRY_AFTER.seconds), 1, 2, id="seconds"),
+        pytest.param(None, 2, 3, id="missing"),
+        pytest.param("Wed, 21 Oct 2026 07:28:00 GMT", 2, 3, id="http-date"),
+        pytest.param("-300", 2, 3, id="negative"),
+        pytest.param("inf", 2, 3, id="infinite"),
+    ],
+)
 async def test_coordinator_rate_limited(
     hass: HomeAssistant,
     mock_fixture: str,
     interval: timedelta,
+    after: str | None,
+    calls_at_interval: int,
+    calls_at_retry_after: int,
     request: pytest.FixtureRequest,
     freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tests that a 429 with Retry-After defers the next refresh of each coordinator."""
+    """Tests that a 429 defers the next refresh only for a usable Retry-After."""
 
     mock = request.getfixturevalue(mock_fixture)
     await setup_platform(hass, [Platform.SENSOR])
 
     mock.reset_mock()
-    mock.side_effect = RateLimited({"after": str(RETRY_AFTER.seconds)})
+    mock.side_effect = RateLimited({"reset": None, "after": after})
     freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     mock.assert_called_once()
+    assert "Unexpected error" not in caplog.text
 
-    # The normal interval elapsing again must not refresh inside the Retry-After window.
+    # A usable Retry-After skips the normal interval, anything else falls back to it.
     mock.side_effect = None
     freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    mock.assert_called_once()
+    assert mock.call_count == calls_at_interval
 
     freezer.tick(RETRY_AFTER - interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    assert mock.call_count == 2
-
-
-@pytest.mark.parametrize(
-    ("data", "expected"),
-    [
-        ({"after": "30"}, 30.0),
-        ({"after": None}, None),
-        ({"after": "-5"}, None),
-        ({"after": "nan"}, None),
-        ({"after": "inf"}, None),
-        ({"after": "-inf"}, None),
-        ({"after": "Wed, 21 Oct 2026 07:28:00 GMT"}, None),
-        (None, None),
-    ],
-    ids=[
-        "valid",
-        "no-header",
-        "negative",
-        "nan",
-        "inf",
-        "neg-inf",
-        "http-date",
-        "no-data",
-    ],
-)
-def test_get_retry_after(
-    data: dict[str, str | None] | None, expected: float | None
-) -> None:
-    """Tests that _get_retry_after only accepts finite, non-negative delays."""
-
-    assert _get_retry_after(RateLimited(data)) == expected
+    assert mock.call_count == calls_at_retry_after
 
 
 async def test_coordinator_live_error(

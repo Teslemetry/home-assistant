@@ -8,12 +8,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from aiohttp import ClientError, ClientResponseError
 from tesla_fleet_api.const import TeslaEnergyPeriod
-from tesla_fleet_api.exceptions import (
-    InvalidToken,
-    MissingToken,
-    RateLimited,
-    TeslaFleetError,
-)
+from tesla_fleet_api.exceptions import InvalidToken, MissingToken, TeslaFleetError
 from tesla_fleet_api.tessie import EnergySite, Vehicle
 
 from homeassistant.core import HomeAssistant
@@ -35,14 +30,16 @@ TESSIE_ENERGY_HISTORY_INTERVAL = timedelta(seconds=60)
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_retry_after(err: RateLimited) -> float | None:
-    """Return the Retry-After hint in seconds, if the server provided one."""
+def _get_retry_after(err: TeslaFleetError) -> float | None:
+    """Return the Retry-After hint in seconds, if the error carries one."""
     if not isinstance(err.data, dict) or (after := err.data.get("after")) is None:
         return None
     try:
         value = float(after)
     except ValueError:
+        # Retry-After may also be an HTTP-date
         return None
+    # A non-finite or negative delay would stop polling or refresh immediately
     return value if math.isfinite(value) and value >= 0 else None
 
 
@@ -94,16 +91,11 @@ class TessieStateUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             vehicle = await self.api.state(use_cache=True)
         except (InvalidToken, MissingToken) as e:
             raise ConfigEntryAuthFailed from e
-        except RateLimited as e:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                retry_after=_get_retry_after(e),
-            ) from e
         except TeslaFleetError as e:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
+                retry_after=_get_retry_after(e),
             ) from e
         except ClientResponseError as e:
             if e.status == HTTPStatus.UNAUTHORIZED:
@@ -156,16 +148,11 @@ class TessieEnergySiteLiveCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = (await self.api.live_status())["response"]
         except (InvalidToken, MissingToken) as e:
             raise ConfigEntryAuthFailed from e
-        except RateLimited as e:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                retry_after=_get_retry_after(e),
-            ) from e
         except TeslaFleetError as e:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
+                retry_after=_get_retry_after(e),
             ) from e
 
         # Convert Wall Connectors from array to dict
@@ -202,16 +189,11 @@ class TessieEnergySiteInfoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = (await self.api.site_info())["response"]
         except (InvalidToken, MissingToken) as e:
             raise ConfigEntryAuthFailed from e
-        except RateLimited as e:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                retry_after=_get_retry_after(e),
-            ) from e
         except TeslaFleetError as e:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
+                retry_after=_get_retry_after(e),
             ) from e
 
         return flatten(data)
@@ -250,16 +232,11 @@ class TessieEnergyHistoryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_domain=DOMAIN,
                 translation_key="auth_failed",
             ) from e
-        except RateLimited as e:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                retry_after=_get_retry_after(e),
-            ) from e
         except TeslaFleetError as e:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
+                retry_after=_get_retry_after(e),
             ) from e
 
         if (
