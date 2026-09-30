@@ -29,7 +29,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     Platform,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
@@ -42,6 +42,8 @@ from .const import (
     METADATA_NOSCOPE,
     VEHICLE_DATA_ALT,
 )
+
+from tests.common import mock_restore_cache
 
 VIN = "LRW3F7EK4NC700000"
 
@@ -785,3 +787,98 @@ async def test_climate_streaming_hvac_ac_enabled_changes(
     )
     await hass.async_block_till_done()
     assert hass.states.get("climate.test_climate").state == HVACMode.FAN_ONLY
+
+
+async def test_climate_streaming_hvac_ac_enabled_unknown(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+) -> None:
+    """Tests an unknown A/C state is treated as enabled, as before any HvacACEnabled."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    for data, expected, expected_modes in (
+        (
+            {Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False},
+            HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_AC_ENABLED: None},
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+        ),
+    ):
+        mock_add_listener.send(
+            {
+                "vin": VEHICLE_DATA_ALT["response"]["vin"],
+                "data": data,
+                "createdAt": "2024-10-04T10:45:17.537Z",
+            }
+        )
+        await hass.async_block_till_done()
+        state = hass.states.get("climate.test_climate")
+        assert state.state == expected
+        assert state.attributes[ATTR_HVAC_MODES] == expected_modes
+
+
+@pytest.mark.parametrize(
+    ("restored_state", "restored_modes", "expected"),
+    [
+        pytest.param(
+            HVACMode.OFF,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            HVACMode.FAN_ONLY,
+            id="off_ac_disabled",
+        ),
+        pytest.param(
+            STATE_UNKNOWN,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            HVACMode.FAN_ONLY,
+            id="unknown_ac_disabled",
+        ),
+        pytest.param(
+            HVACMode.OFF,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            HVACMode.HEAT_COOL,
+            id="off_ac_enabled",
+        ),
+    ],
+)
+async def test_climate_streaming_hvac_ac_enabled_restored(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    restored_state: str,
+    restored_modes: list[HVACMode],
+    expected: HVACMode,
+) -> None:
+    """Tests the restored HVAC modes decide the mode once climate power is streamed."""
+
+    mock_restore_cache(
+        hass,
+        [
+            State(
+                "climate.test_climate",
+                restored_state,
+                {ATTR_HVAC_MODES: restored_modes},
+            )
+        ],
+    )
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    state = hass.states.get("climate.test_climate")
+    assert state.state == restored_state
+    assert state.attributes[ATTR_HVAC_MODES] == restored_modes
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {Signal.HVAC_POWER: "HvacPowerStateOn"},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("climate.test_climate")
+    assert state.state == expected
+    assert state.attributes[ATTR_HVAC_MODES] == restored_modes
