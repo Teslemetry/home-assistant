@@ -382,7 +382,7 @@ class TeslemetryStreamingClimateEntity(
         """Return the HVAC mode the vehicle runs in while climate is on."""
         return HVACMode.FAN_ONLY if self._ac_enabled is False else HVACMode.HEAT_COOL
 
-    def _async_set_ac_enabled(self, ac_enabled: bool | None) -> None:
+    def _async_set_ac_enabled(self, ac_enabled: bool) -> None:
         # Tesla has no command to toggle A/C, so only the current on mode is offered
         self._ac_enabled = ac_enabled
         self._attr_hvac_modes = [self._hvac_mode_on, HVACMode.OFF]
@@ -393,8 +393,8 @@ class TeslemetryStreamingClimateEntity(
         data = event["data"]
         if Signal.HVAC_AC_ENABLED not in data and Signal.HVAC_POWER not in data:
             return
-        if Signal.HVAC_AC_ENABLED in data:
-            ac_enabled = data[Signal.HVAC_AC_ENABLED]
+        # A null A/C state is unknown, so the last known one is kept
+        if (ac_enabled := data.get(Signal.HVAC_AC_ENABLED)) is not None:
             # Some vehicles stream booleans as strings
             if isinstance(ac_enabled, str):
                 ac_enabled = ac_enabled == "true"

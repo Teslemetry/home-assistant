@@ -961,10 +961,22 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
             id="on_to_power_unknown",
         ),
         pytest.param(
-            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
-            [{Signal.HVAC_AC_ENABLED: None}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_AC_ENABLED: None}, {Signal.HVAC_POWER: "HvacPowerStateOn"}],
+            [(HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="ac_disabled_then_ac_null_keeps_ac_disabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_AC_ENABLED: None}, {Signal.HVAC_POWER: "HvacPowerStateOn"}],
             [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
-            id="ac_unknown_defaults_to_ac_enabled",
+            id="ac_enabled_then_ac_null_keeps_ac_enabled",
+        ),
+        pytest.param(
+            [],
+            [{Signal.HVAC_AC_ENABLED: None}, {Signal.HVAC_POWER: "HvacPowerStateOn"}],
+            [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="ac_null_before_any_ac_enabled_defaults_to_ac_enabled",
         ),
     ],
 )
