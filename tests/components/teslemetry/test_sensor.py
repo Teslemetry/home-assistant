@@ -499,6 +499,7 @@ async def test_sensors_streaming_tpms_none_clears_state(
         ("tonneau_tent_mode", Signal.TONNEAU_TENT_MODE, "Active", "active"),
         ("lights_turn_signal", Signal.LIGHTS_TURN_SIGNAL, "Left", "left"),
         ("hvac_power_state", Signal.HVAC_POWER, "On", "on"),
+        ("drive_state_shift_state", Signal.GEAR, "ShiftStateD", "d"),
     ],
 )
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -545,7 +546,6 @@ async def test_streaming_enum_none_clears_state(
         pytest.param("ShiftStateUnknown", id="unknown"),
         pytest.param("ShiftStateInvalid", id="invalid"),
         pytest.param("ShiftStateSNA", id="sna"),
-        pytest.param(None, id="none"),
     ],
 )
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -553,7 +553,7 @@ async def test_streaming_shift_state_without_gear(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
     mock_add_listener: AsyncMock,
-    raw_value: str | None,
+    raw_value: str,
 ) -> None:
     """A streamed gear that is not P, D, R or N is unknown, not park."""
     await setup_platform(hass, [Platform.SENSOR])
