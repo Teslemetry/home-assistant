@@ -857,7 +857,7 @@ async def test_climate_streaming_hvac_ac_enabled_unknown(
             HVACMode.OFF,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
             HVACMode.HEAT_COOL,
-            id="off_ac_enabled",
+            id="off_without_fan_only_defaults_to_ac_enabled",
         ),
     ],
 )
@@ -868,7 +868,7 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
     restored_modes: list[HVACMode],
     expected: HVACMode,
 ) -> None:
-    """Tests the restored HVAC modes decide the mode once climate power is streamed."""
+    """Tests restored fan only modes keep the A/C disabled, else it defaults to enabled."""
 
     mock_restore_cache(
         hass,
@@ -987,14 +987,20 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
             ],
             id="on_then_ac_enabled",
         ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_POWER: None}],
+            [(STATE_UNKNOWN, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="on_to_power_unknown",
+        ),
     ],
 )
 async def test_climate_streaming_hvac_states_written(
     hass: HomeAssistant,
     mock_add_listener: AsyncMock,
     prior: list[dict[Signal, str | bool]],
-    messages: list[dict[Signal, str | bool]],
-    expected: list[tuple[HVACMode, list[HVACMode]]],
+    messages: list[dict[Signal, str | bool | None]],
+    expected: list[tuple[str, list[HVACMode]]],
 ) -> None:
     """Tests every state written, so one message never reports a mode it rules out."""
 
@@ -1031,3 +1037,43 @@ async def test_climate_streaming_hvac_states_written(
     assert [
         (state.state, state.attributes[ATTR_HVAC_MODES]) for state in states
     ] == expected
+
+
+async def test_climate_streaming_enables_hvac_fields(
+    hass: HomeAssistant,
+    mock_stream_update_config: AsyncMock,
+) -> None:
+    """Tests the streaming climate entity enables the fields its listener reads."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    mock_stream_update_config.assert_any_call({"fields": {Signal.HVAC_POWER: None}})
+    mock_stream_update_config.assert_any_call(
+        {"fields": {Signal.HVAC_AC_ENABLED: None}}
+    )
+
+
+async def test_climate_streaming_ignores_other_vehicle(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+) -> None:
+    """Tests another vehicle's climate fields do not change this vehicle's entity."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    mock_add_listener.send(
+        {
+            "vin": "LRW3F7EK4NC700001",
+            "data": {
+                Signal.HVAC_POWER: "HvacPowerStateOn",
+                Signal.HVAC_AC_ENABLED: False,
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("climate.test_climate")
+    assert state.state == STATE_UNKNOWN
+    assert state.attributes[ATTR_HVAC_MODES] == [HVACMode.HEAT_COOL, HVACMode.OFF]
