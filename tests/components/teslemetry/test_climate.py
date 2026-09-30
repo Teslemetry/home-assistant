@@ -29,9 +29,16 @@ from homeassistant.const import (
     STATE_UNKNOWN,
     Platform,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import (
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 
 from . import assert_entities, reload_platform, setup_platform
 from .const import (
@@ -571,6 +578,15 @@ async def test_climate_streaming_drive_side(
             id="off_fan_only",
         ),
         pytest.param(
+            {
+                Signal.HVAC_POWER: "HvacPowerStateOn",
+                Signal.HVAC_AC_ENABLED: "false",
+            },
+            HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            id="on_fan_only_string_encoded",
+        ),
+        pytest.param(
             {Signal.HVAC_POWER: "HvacPowerStateOn"},
             HVACMode.HEAT_COOL,
             [HVACMode.HEAT_COOL, HVACMode.OFF],
@@ -882,3 +898,136 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
     state = hass.states.get("climate.test_climate")
     assert state.state == expected
     assert state.attributes[ATTR_HVAC_MODES] == restored_modes
+
+
+@pytest.mark.parametrize(
+    ("prior", "messages", "expected"),
+    [
+        pytest.param(
+            [],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [(HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="unknown_to_on_ac_disabled",
+        ),
+        pytest.param(
+            [],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="unknown_to_on_ac_enabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="off_ac_disabled_to_on_ac_enabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [(HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="off_ac_enabled_to_on_ac_disabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [(HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="on_ac_enabled_to_on_ac_disabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="on_ac_disabled_to_on_ac_enabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [(HVACMode.OFF, [HVACMode.FAN_ONLY, HVACMode.OFF])],
+            id="on_ac_enabled_to_off_ac_disabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True}],
+            [(HVACMode.OFF, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="on_ac_disabled_to_off_ac_enabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_AC_ENABLED: False}, {Signal.HVAC_POWER: "HvacPowerStateOn"}],
+            [
+                (HVACMode.OFF, [HVACMode.FAN_ONLY, HVACMode.OFF]),
+                (HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF]),
+            ],
+            id="ac_disabled_then_on",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn"}, {Signal.HVAC_AC_ENABLED: False}],
+            [
+                (HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF]),
+                (HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF]),
+            ],
+            id="on_then_ac_disabled",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_AC_ENABLED: True}, {Signal.HVAC_POWER: "HvacPowerStateOn"}],
+            [
+                (HVACMode.OFF, [HVACMode.HEAT_COOL, HVACMode.OFF]),
+                (HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF]),
+            ],
+            id="ac_enabled_then_on",
+        ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_POWER: "HvacPowerStateOn"}, {Signal.HVAC_AC_ENABLED: True}],
+            [
+                (HVACMode.FAN_ONLY, [HVACMode.FAN_ONLY, HVACMode.OFF]),
+                (HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF]),
+            ],
+            id="on_then_ac_enabled",
+        ),
+    ],
+)
+async def test_climate_streaming_hvac_states_written(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    prior: list[dict[Signal, str | bool]],
+    messages: list[dict[Signal, str | bool]],
+    expected: list[tuple[HVACMode, list[HVACMode]]],
+) -> None:
+    """Tests every state written, so one message never reports a mode it rules out."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    for data in prior:
+        mock_add_listener.send(
+            {
+                "vin": VEHICLE_DATA_ALT["response"]["vin"],
+                "data": data,
+                "createdAt": "2024-10-04T10:45:17.537Z",
+            }
+        )
+    await hass.async_block_till_done()
+
+    states: list[State | None] = []
+
+    @callback
+    def capture_state(event: Event[EventStateChangedData]) -> None:
+        states.append(event.data["new_state"])
+
+    async_track_state_change_event(hass, "climate.test_climate", capture_state)
+
+    for data in messages:
+        mock_add_listener.send(
+            {
+                "vin": VEHICLE_DATA_ALT["response"]["vin"],
+                "data": data,
+                "createdAt": "2024-10-04T10:45:17.537Z",
+            }
+        )
+    await hass.async_block_till_done()
+
+    assert [
+        (state.state, state.attributes[ATTR_HVAC_MODES]) for state in states
+    ] == expected

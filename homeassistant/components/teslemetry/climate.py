@@ -7,6 +7,8 @@ from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import CabinOverheatProtectionTemp, Scope
 from tesla_fleet_api.router import VehicleRouter
 from tesla_fleet_api.teslemetry import Vehicle
+from teslemetry_stream import Signal
+from teslemetry_stream.const import HvacPowerState
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
@@ -325,14 +327,18 @@ class TeslemetryStreamingClimateEntity(
                 self._async_handle_inside_temp
             )
         )
+        # One listener for both fields, so a message carrying both is written once
         self.async_on_remove(
-            self.vehicle.stream_vehicle.listen_HvacPower(self._async_handle_hvac_power)
-        )
-        self.async_on_remove(
-            self.vehicle.stream_vehicle.listen_HvacACEnabled(
-                self._async_handle_hvac_ac_enabled
+            self.stream.async_add_listener(
+                self._async_handle_hvac, {"vin": self.vin, "data": None}
             )
         )
+        for signal in (Signal.HVAC_AC_ENABLED, Signal.HVAC_POWER):
+            self.vehicle.config_entry.async_create_background_task(
+                self.hass,
+                self.add_field(signal),
+                f"Adding field {signal} to {self.vehicle.vin}",
+            )
         self.async_on_remove(
             self.vehicle.stream_vehicle.listen_ClimateKeeperMode(
                 self._async_handle_climate_keeper_mode
@@ -383,18 +389,25 @@ class TeslemetryStreamingClimateEntity(
         if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.FAN_ONLY):
             self._attr_hvac_mode = self._hvac_mode_on
 
-    def _async_handle_hvac_power(self, data: str | None) -> None:
-        self._attr_hvac_mode = (
-            None
-            if data is None
-            else self._hvac_mode_on
-            if data in {"On", "Precondition"}
-            else HVACMode.OFF
-        )
-        self.async_write_ha_state()
-
-    def _async_handle_hvac_ac_enabled(self, data: bool | None) -> None:
-        self._async_set_ac_enabled(data)
+    def _async_handle_hvac(self, event: dict[str, Any]) -> None:
+        data = event["data"]
+        if Signal.HVAC_AC_ENABLED not in data and Signal.HVAC_POWER not in data:
+            return
+        if Signal.HVAC_AC_ENABLED in data:
+            ac_enabled = data[Signal.HVAC_AC_ENABLED]
+            # Some vehicles stream booleans as strings
+            if isinstance(ac_enabled, str):
+                ac_enabled = ac_enabled == "true"
+            self._async_set_ac_enabled(ac_enabled)
+        if Signal.HVAC_POWER in data:
+            power = HvacPowerState.get(data[Signal.HVAC_POWER])
+            self._attr_hvac_mode = (
+                None
+                if power is None
+                else self._hvac_mode_on
+                if power in {"On", "Precondition"}
+                else HVACMode.OFF
+            )
         self.async_write_ha_state()
 
     def _async_handle_climate_keeper_mode(self, data: str | None) -> None:
