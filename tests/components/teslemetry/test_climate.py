@@ -805,39 +805,6 @@ async def test_climate_streaming_hvac_ac_enabled_changes(
     assert hass.states.get("climate.test_climate").state == HVACMode.FAN_ONLY
 
 
-async def test_climate_streaming_hvac_ac_enabled_unknown(
-    hass: HomeAssistant,
-    mock_add_listener: AsyncMock,
-) -> None:
-    """Tests an unknown A/C state is treated as enabled, as before any HvacACEnabled."""
-
-    await setup_platform(hass, [Platform.CLIMATE])
-
-    for data, expected, expected_modes in (
-        (
-            {Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False},
-            HVACMode.FAN_ONLY,
-            [HVACMode.FAN_ONLY, HVACMode.OFF],
-        ),
-        (
-            {Signal.HVAC_AC_ENABLED: None},
-            HVACMode.HEAT_COOL,
-            [HVACMode.HEAT_COOL, HVACMode.OFF],
-        ),
-    ):
-        mock_add_listener.send(
-            {
-                "vin": VEHICLE_DATA_ALT["response"]["vin"],
-                "data": data,
-                "createdAt": "2024-10-04T10:45:17.537Z",
-            }
-        )
-        await hass.async_block_till_done()
-        state = hass.states.get("climate.test_climate")
-        assert state.state == expected
-        assert state.attributes[ATTR_HVAC_MODES] == expected_modes
-
-
 @pytest.mark.parametrize(
     ("restored_state", "restored_modes", "expected"),
     [
@@ -993,6 +960,12 @@ async def test_climate_streaming_hvac_ac_enabled_restored(
             [(STATE_UNKNOWN, [HVACMode.HEAT_COOL, HVACMode.OFF])],
             id="on_to_power_unknown",
         ),
+        pytest.param(
+            [{Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False}],
+            [{Signal.HVAC_AC_ENABLED: None}],
+            [(HVACMode.HEAT_COOL, [HVACMode.HEAT_COOL, HVACMode.OFF])],
+            id="ac_unknown_defaults_to_ac_enabled",
+        ),
     ],
 )
 async def test_climate_streaming_hvac_states_written(
@@ -1062,18 +1035,21 @@ async def test_climate_streaming_ignores_other_vehicle(
 
     await setup_platform(hass, [Platform.CLIMATE])
 
-    mock_add_listener.send(
-        {
-            "vin": "LRW3F7EK4NC700001",
-            "data": {
-                Signal.HVAC_POWER: "HvacPowerStateOn",
-                Signal.HVAC_AC_ENABLED: False,
-            },
-            "createdAt": "2024-10-04T10:45:17.537Z",
-        }
-    )
+    for vin, data in (
+        (
+            VEHICLE_DATA_ALT["response"]["vin"],
+            {Signal.HVAC_POWER: "HvacPowerStateOff", Signal.HVAC_AC_ENABLED: True},
+        ),
+        (
+            "LRW3F7EK4NC700001",
+            {Signal.HVAC_POWER: "HvacPowerStateOn", Signal.HVAC_AC_ENABLED: False},
+        ),
+    ):
+        mock_add_listener.send(
+            {"vin": vin, "data": data, "createdAt": "2024-10-04T10:45:17.537Z"}
+        )
     await hass.async_block_till_done()
 
     state = hass.states.get("climate.test_climate")
-    assert state.state == STATE_UNKNOWN
+    assert state.state == HVACMode.OFF
     assert state.attributes[ATTR_HVAC_MODES] == [HVACMode.HEAT_COOL, HVACMode.OFF]
