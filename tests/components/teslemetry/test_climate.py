@@ -11,6 +11,7 @@ from teslemetry_stream import Signal
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_HVAC_MODES,
     ATTR_PRESET_MODE,
     ATTR_TEMPERATURE,
     DOMAIN as CLIMATE_DOMAIN,
@@ -492,24 +493,64 @@ async def test_climate_streaming_drive_side(
 
 
 @pytest.mark.parametrize(
-    ("hvac_power", "ac_enabled", "expected"),
+    ("hvac_power", "ac_enabled", "expected", "expected_modes"),
     [
-        pytest.param("HvacPowerStateOn", True, HVACMode.HEAT_COOL, id="on"),
         pytest.param(
-            "HvacPowerStatePrecondition", True, HVACMode.HEAT_COOL, id="precondition"
+            "HvacPowerStateOn",
+            True,
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            id="on",
         ),
         pytest.param(
-            "HvacPowerStateOverheatProtect", True, HVACMode.OFF, id="overheat"
+            "HvacPowerStatePrecondition",
+            True,
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            id="precondition",
         ),
-        pytest.param("HvacPowerStateOff", True, HVACMode.OFF, id="off"),
-        pytest.param("HvacPowerStateOn", False, HVACMode.FAN_ONLY, id="on_fan_only"),
+        pytest.param(
+            "HvacPowerStateOverheatProtect",
+            True,
+            HVACMode.OFF,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            id="overheat",
+        ),
+        pytest.param(
+            "HvacPowerStateOff",
+            True,
+            HVACMode.OFF,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+            id="off",
+        ),
+        pytest.param(
+            "HvacPowerStateOn",
+            False,
+            HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            id="on_fan_only",
+        ),
         pytest.param(
             "HvacPowerStatePrecondition",
             False,
             HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
             id="precondition_fan_only",
         ),
-        pytest.param("HvacPowerStateOff", False, HVACMode.OFF, id="off_fan_only"),
+        pytest.param(
+            "HvacPowerStateOverheatProtect",
+            False,
+            HVACMode.OFF,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            id="overheat_fan_only",
+        ),
+        pytest.param(
+            "HvacPowerStateOff",
+            False,
+            HVACMode.OFF,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+            id="off_fan_only",
+        ),
     ],
 )
 async def test_climate_streaming_hvac_power(
@@ -518,8 +559,9 @@ async def test_climate_streaming_hvac_power(
     hvac_power: str,
     ac_enabled: bool,
     expected: HVACMode,
+    expected_modes: list[HVACMode],
 ) -> None:
-    """Tests the streaming HVAC mode from HvacPower and HvacACEnabled."""
+    """Tests the streaming HVAC mode and modes from HvacPower and HvacACEnabled."""
 
     await setup_platform(hass, [Platform.CLIMATE])
 
@@ -535,24 +577,122 @@ async def test_climate_streaming_hvac_power(
     )
     await hass.async_block_till_done()
 
+    state = hass.states.get("climate.test_climate")
+    assert state.state == expected
+    assert state.attributes[ATTR_HVAC_MODES] == expected_modes
+
+
+@pytest.mark.parametrize(
+    ("ac_enabled", "expected"),
+    [
+        pytest.param(True, HVACMode.HEAT_COOL, id="ac"),
+        pytest.param(False, HVACMode.FAN_ONLY, id="fan_only"),
+    ],
+)
+async def test_climate_streaming_turn_on(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    ac_enabled: bool,
+    expected: HVACMode,
+) -> None:
+    """Tests turning on streaming climate starts it in the enabled mode."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {
+                Signal.HVAC_POWER: "HvacPowerStateOff",
+                Signal.HVAC_AC_ENABLED: ac_enabled,
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    with patch(
+        "tesla_fleet_api.teslemetry.Vehicle.auto_conditioning_start",
+        return_value=COMMAND_OK,
+    ) as mock_start:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_TURN_ON,
+            {ATTR_ENTITY_ID: ["climate.test_climate"]},
+            blocking=True,
+        )
+    mock_start.assert_called_once()
     assert hass.states.get("climate.test_climate").state == expected
+
+
+async def test_climate_streaming_fan_only_rejects_heat_cool(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+) -> None:
+    """Tests heat/cool is not offered while the A/C is disabled."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {Signal.HVAC_AC_ENABLED: False},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_SET_HVAC_MODE,
+            {
+                ATTR_ENTITY_ID: ["climate.test_climate"],
+                ATTR_HVAC_MODE: HVACMode.HEAT_COOL,
+            },
+            blocking=True,
+        )
 
 
 async def test_climate_streaming_hvac_ac_enabled_changes(
     hass: HomeAssistant,
     mock_add_listener: AsyncMock,
 ) -> None:
-    """Tests that A/C changes only switch the mode while climate is on."""
+    """Tests that A/C changes switch the modes, and the mode while climate is on."""
 
     entry = await setup_platform(hass, [Platform.CLIMATE])
 
-    for data, expected in (
-        ({Signal.HVAC_POWER: "HvacPowerStateOn"}, HVACMode.HEAT_COOL),
-        ({Signal.HVAC_AC_ENABLED: False}, HVACMode.FAN_ONLY),
-        ({Signal.HVAC_AC_ENABLED: True}, HVACMode.HEAT_COOL),
-        ({Signal.HVAC_POWER: "HvacPowerStateOff"}, HVACMode.OFF),
-        ({Signal.HVAC_AC_ENABLED: False}, HVACMode.OFF),
-        ({Signal.HVAC_POWER: "HvacPowerStateOn"}, HVACMode.FAN_ONLY),
+    for data, expected, expected_modes in (
+        (
+            {Signal.HVAC_POWER: "HvacPowerStateOn"},
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_AC_ENABLED: False},
+            HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_AC_ENABLED: True},
+            HVACMode.HEAT_COOL,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_POWER: "HvacPowerStateOff"},
+            HVACMode.OFF,
+            [HVACMode.HEAT_COOL, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_AC_ENABLED: False},
+            HVACMode.OFF,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+        ),
+        (
+            {Signal.HVAC_POWER: "HvacPowerStateOn"},
+            HVACMode.FAN_ONLY,
+            [HVACMode.FAN_ONLY, HVACMode.OFF],
+        ),
     ):
         mock_add_listener.send(
             {
@@ -562,23 +702,14 @@ async def test_climate_streaming_hvac_ac_enabled_changes(
             }
         )
         await hass.async_block_till_done()
-        assert hass.states.get("climate.test_climate").state == expected
-
-    # Turning on cannot enable A/C, so the car keeps running fan only
-    with patch(
-        "tesla_fleet_api.teslemetry.Vehicle.auto_conditioning_start",
-        return_value=COMMAND_OK,
-    ):
-        await hass.services.async_call(
-            CLIMATE_DOMAIN,
-            SERVICE_TURN_ON,
-            {ATTR_ENTITY_ID: ["climate.test_climate"]},
-            blocking=True,
-        )
-    assert hass.states.get("climate.test_climate").state == HVACMode.FAN_ONLY
+        state = hass.states.get("climate.test_climate")
+        assert state.state == expected
+        assert state.attributes[ATTR_HVAC_MODES] == expected_modes
 
     await reload_platform(hass, entry, [Platform.CLIMATE])
-    assert hass.states.get("climate.test_climate").state == HVACMode.FAN_ONLY
+    state = hass.states.get("climate.test_climate")
+    assert state.state == HVACMode.FAN_ONLY
+    assert state.attributes[ATTR_HVAC_MODES] == [HVACMode.FAN_ONLY, HVACMode.OFF]
 
     # The restored A/C state still applies when climate power is streamed again
     mock_add_listener.send(

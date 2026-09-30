@@ -10,6 +10,7 @@ from tesla_fleet_api.teslemetry import Vehicle
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_HVAC_MODES,
     HVAC_MODES,
     ClimateEntity,
     ClimateEntityFeature,
@@ -109,6 +110,11 @@ class TeslemetryClimateEntity(TeslemetryRootEntity, ClimateEntity):
     _attr_preset_modes = list(PRESET_MODES.values())
     _attr_fan_modes = ["off", "bioweapon"]
 
+    @property
+    def _hvac_mode_on(self) -> HVACMode:
+        """Return the HVAC mode the vehicle runs in while climate is on."""
+        return HVACMode.HEAT_COOL
+
     @override
     async def async_turn_on(self) -> None:
         """Set the climate state to on."""
@@ -116,7 +122,7 @@ class TeslemetryClimateEntity(TeslemetryRootEntity, ClimateEntity):
 
         await handle_vehicle_command(self.api.auto_conditioning_start())
 
-        self._attr_hvac_mode = HVACMode.HEAT_COOL
+        self._attr_hvac_mode = self._hvac_mode_on
         self.async_write_ha_state()
 
     @override
@@ -174,7 +180,7 @@ class TeslemetryClimateEntity(TeslemetryRootEntity, ClimateEntity):
         if preset_mode == self._attr_preset_modes[0]:
             self._attr_hvac_mode = HVACMode.OFF
         else:
-            self._attr_hvac_mode = HVACMode.HEAT_COOL
+            self._attr_hvac_mode = self._hvac_mode_on
         self.async_write_ha_state()
 
     @override
@@ -190,7 +196,7 @@ class TeslemetryClimateEntity(TeslemetryRootEntity, ClimateEntity):
         )
         self._attr_fan_mode = fan_mode
         if fan_mode == self._attr_fan_modes[1]:
-            self._attr_hvac_mode = HVACMode.HEAT_COOL
+            self._attr_hvac_mode = self._hvac_mode_on
         self.async_write_ha_state()
 
 
@@ -302,9 +308,8 @@ class TeslemetryStreamingClimateEntity(
             self._attr_hvac_mode = (
                 HVACMode(state.state) if state.state in HVAC_MODES else None
             )
-            if self._attr_hvac_mode == HVACMode.FAN_ONLY:
-                self._attr_hvac_mode = HVACMode.HEAT_COOL
-                self._ac_enabled = False
+            if HVACMode.FAN_ONLY in state.attributes.get(ATTR_HVAC_MODES, []):
+                self._async_set_ac_enabled(False)
             self._attr_current_temperature = state.attributes.get(
                 ClimateEntityStateAttribute.CURRENT_TEMPERATURE
             )
@@ -367,25 +372,29 @@ class TeslemetryStreamingClimateEntity(
 
     @property
     @override
-    def hvac_mode(self) -> HVACMode | None:
-        """Return the HVAC mode, which is fan only while climate runs without A/C."""
-        # Tesla has no command to toggle A/C, so fan only is reported but not settable
-        if self._attr_hvac_mode == HVACMode.HEAT_COOL and self._ac_enabled is False:
-            return HVACMode.FAN_ONLY
-        return self._attr_hvac_mode
+    def _hvac_mode_on(self) -> HVACMode:
+        """Return the HVAC mode the vehicle runs in while climate is on."""
+        return HVACMode.FAN_ONLY if self._ac_enabled is False else HVACMode.HEAT_COOL
+
+    def _async_set_ac_enabled(self, ac_enabled: bool | None) -> None:
+        # Tesla has no command to toggle A/C, so only the current on mode is offered
+        self._ac_enabled = ac_enabled
+        self._attr_hvac_modes = [self._hvac_mode_on, HVACMode.OFF]
+        if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.FAN_ONLY):
+            self._attr_hvac_mode = self._hvac_mode_on
 
     def _async_handle_hvac_power(self, data: str | None) -> None:
         self._attr_hvac_mode = (
             None
             if data is None
-            else HVACMode.HEAT_COOL
+            else self._hvac_mode_on
             if data in {"On", "Precondition"}
             else HVACMode.OFF
         )
         self.async_write_ha_state()
 
     def _async_handle_hvac_ac_enabled(self, data: bool | None) -> None:
-        self._ac_enabled = data
+        self._async_set_ac_enabled(data)
         self.async_write_ha_state()
 
     def _async_handle_climate_keeper_mode(self, data: str | None) -> None:
