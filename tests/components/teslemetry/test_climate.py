@@ -625,6 +625,51 @@ async def test_climate_streaming_turn_on(
     assert hass.states.get("climate.test_climate").state == expected
 
 
+@pytest.mark.parametrize(
+    ("ac_enabled", "expected"),
+    [
+        pytest.param(True, HVACMode.HEAT_COOL, id="ac"),
+        pytest.param(False, HVACMode.FAN_ONLY, id="fan_only"),
+    ],
+)
+async def test_climate_streaming_set_preset_mode(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    ac_enabled: bool,
+    expected: HVACMode,
+) -> None:
+    """Tests setting a keeper preset on streaming climate starts it in the enabled mode."""
+
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {
+                Signal.HVAC_POWER: "HvacPowerStateOff",
+                Signal.HVAC_AC_ENABLED: ac_enabled,
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    with patch(
+        "tesla_fleet_api.teslemetry.Vehicle.set_climate_keeper_mode",
+        return_value=COMMAND_OK,
+    ) as mock_keeper:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_SET_PRESET_MODE,
+            {ATTR_ENTITY_ID: ["climate.test_climate"], ATTR_PRESET_MODE: "keep"},
+            blocking=True,
+        )
+    mock_keeper.assert_called_once_with(climate_keeper_mode=1)
+    state = hass.states.get("climate.test_climate")
+    assert state.state == expected
+    assert state.attributes[ATTR_PRESET_MODE] == "keep"
+
+
 async def test_climate_streaming_fan_only_rejects_heat_cool(
     hass: HomeAssistant,
     mock_add_listener: AsyncMock,
