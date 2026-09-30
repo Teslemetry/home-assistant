@@ -378,12 +378,67 @@ async def test_update_streaming_restore_completed_not_in_progress(
     assert state.attributes["update_percentage"] is None
 
 
-async def test_update_streaming_restore_real_progress_survives_stream_event(
+@pytest.mark.parametrize(
+    (
+        "attributes",
+        "extra_data",
+        "version",
+        "expected_restored",
+        "expected_after",
+    ),
+    [
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 42,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {ATTR_DOWNLOAD_PERCENTAGE: 42, ATTR_INSTALL_PERCENTAGE: 0},
+            "2025.1.1",
+            (True, 42),
+            (True, 42),
+            id="download_in_progress",
+        ),
+        pytest.param(
+            {
+                "in_progress": False,
+                "update_percentage": None,
+                "installed_version": "2025.2.1",
+                "latest_version": "2025.2.1",
+            },
+            {ATTR_DOWNLOAD_PERCENTAGE: 100, ATTR_INSTALL_PERCENTAGE: 50},
+            "2025.2.1",
+            (False, None),
+            (False, None),
+            id="up_to_date_mid_install_leftover",
+        ),
+        pytest.param(
+            {
+                "in_progress": True,
+                "update_percentage": 50,
+                "installed_version": "2025.1.1",
+                "latest_version": "2025.2.1",
+            },
+            {ATTR_DOWNLOAD_PERCENTAGE: 100, ATTR_INSTALL_PERCENTAGE: 50},
+            "2025.2.1",
+            (True, 50),
+            (False, None),
+            id="install_finished_offline",
+        ),
+    ],
+)
+async def test_update_streaming_restore_progress_then_stream_event(
     hass: HomeAssistant,
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
+    attributes: dict[str, Any],
+    extra_data: dict[str, int],
+    version: str,
+    expected_restored: tuple[bool, int | None],
+    expected_after: tuple[bool, int | None],
 ) -> None:
-    """Test a restored genuine in-progress download is not cleared by the next stream event."""
+    """Test restored percentages drive progress only while an update is outstanding."""
 
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     entity_id = "update.test_update"
@@ -391,21 +446,8 @@ async def test_update_streaming_restore_real_progress_survives_stream_event(
         hass,
         (
             (
-                State(
-                    entity_id,
-                    STATE_ON,
-                    attributes={
-                        "in_progress": True,
-                        "update_percentage": 42,
-                        "installed_version": "2025.1.1",
-                        "latest_version": "2025.2.1",
-                    },
-                ),
-                {
-                    ATTR_SCHEDULED_AT: None,
-                    ATTR_DOWNLOAD_PERCENTAGE: 42,
-                    ATTR_INSTALL_PERCENTAGE: 0,
-                },
+                State(entity_id, STATE_ON, attributes=attributes),
+                {ATTR_SCHEDULED_AT: None, **extra_data},
             ),
         ),
     )
@@ -413,25 +455,27 @@ async def test_update_streaming_restore_real_progress_survives_stream_event(
     await setup_platform(hass, [Platform.UPDATE])
 
     state = hass.states.get(entity_id)
-    assert state.attributes["in_progress"] is True
-    assert state.attributes["update_percentage"] == 42
+    assert (
+        state.attributes["in_progress"],
+        state.attributes["update_percentage"],
+    ) == expected_restored
 
-    # An unrelated stream event (no download/install signal) still triggers a
-    # progress recompute, which must be based on the restored percentages.
+    # A Version push with no download/install signal still recomputes progress,
+    # so it must use the restored percentages only while they still apply.
     mock_add_listener.send(
         {
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
-            "data": {
-                Signal.VERSION: "2025.1.1",
-            },
+            "data": {Signal.VERSION: version},
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
     )
     await hass.async_block_till_done()
 
     state = hass.states.get(entity_id)
-    assert state.attributes["in_progress"] is True
-    assert state.attributes["update_percentage"] == 42
+    assert (
+        state.attributes["in_progress"],
+        state.attributes["update_percentage"],
+    ) == expected_after
 
 
 @pytest.mark.parametrize(
@@ -525,6 +569,10 @@ async def test_update_streaming_restore_current_schedule_expires(
             id="expired",
         ),
         pytest.param({}, id="never_recorded"),
+        pytest.param(
+            {ATTR_SCHEDULED_AT: dt_util.utcnow().isoformat()},
+            id="incomplete",
+        ),
     ],
 )
 async def test_update_streaming_restore_scheduled_stale(

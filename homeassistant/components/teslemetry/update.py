@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, override
+from typing import Any, Self, override
 
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
@@ -65,15 +65,20 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TeslemetryUpdateExtraStoredData:
+    def from_dict(cls, data: dict[str, Any]) -> Self | None:
         """Initialize the extra data from a dict."""
-        scheduled_at = data[ATTR_SCHEDULED_AT]
+        try:
+            scheduled_at = data[ATTR_SCHEDULED_AT]
+            download_percentage = data[ATTR_DOWNLOAD_PERCENTAGE]
+            install_percentage = data[ATTR_INSTALL_PERCENTAGE]
+        except KeyError:
+            return None
         return cls(
             scheduled_at=dt_util.parse_datetime(scheduled_at)
             if scheduled_at is not None
             else None,
-            download_percentage=data[ATTR_DOWNLOAD_PERCENTAGE],
-            install_percentage=data[ATTR_INSTALL_PERCENTAGE],
+            download_percentage=download_percentage,
+            install_percentage=install_percentage,
         )
 
 
@@ -203,11 +208,11 @@ class TeslemetryStreamingUpdateEntity(
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        extra: TeslemetryUpdateExtraStoredData | None = None
         if (extra_data := await self.async_get_last_extra_data()) is not None:
             extra = TeslemetryUpdateExtraStoredData.from_dict(extra_data.as_dict())
+        if extra is not None:
             self._scheduled_at = extra.scheduled_at
-            self._download_percentage = extra.download_percentage
-            self._install_percentage = extra.install_percentage
         if (state := await self.async_get_last_state()) is not None:
             self._attr_installed_version = state.attributes.get(
                 UpdateEntityStateAttribute.INSTALLED_VERSION
@@ -230,6 +235,11 @@ class TeslemetryStreamingUpdateEntity(
                     UpdateEntityStateAttribute.UPDATE_PERCENTAGE
                 )
                 self._scheduled = self._attr_in_progress
+                # Percentages left over from a finished update would re-latch
+                # "installing" on the next stream event, so only restore them here.
+                if extra is not None:
+                    self._download_percentage = extra.download_percentage
+                    self._install_percentage = extra.install_percentage
                 # A restored in-progress flag caused only by the scheduled latch
                 # (no real download/install percentage) is unverifiable once its
                 # schedule has gone stale.
@@ -298,6 +308,7 @@ class TeslemetryStreamingUpdateEntity(
         """Handle software update scheduled start time."""
 
         self._scheduled = value is not None
+        # Arrival time, not the value: Tesla reports these timestamps skewed.
         self._scheduled_at = dt_util.utcnow() if value is not None else None
         self._async_arm_scheduled_expiry()
         self._async_update_progress()
@@ -342,7 +353,13 @@ class TeslemetryStreamingUpdateEntity(
         """Handle version."""
 
         if value is not None:
-            self._attr_installed_version = value.split(" ")[0]
+            installed_version = value.split(" ")[0]
+            # A changed installed version means the tracked update finished,
+            # even if its final percentage push was missed while offline.
+            if self._attr_installed_version not in (None, installed_version):
+                self._download_percentage = 0
+                self._install_percentage = 0
+            self._attr_installed_version = installed_version
             # A new installed version can be the only signal that an offline
             # install finished, so re-evaluate any lingering scheduled flag.
             self._async_update_progress()
