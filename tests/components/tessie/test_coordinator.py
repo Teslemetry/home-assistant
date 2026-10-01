@@ -114,13 +114,14 @@ async def test_coordinator_connection(
     ids=["state", "live", "info", "history"],
 )
 @pytest.mark.parametrize(
-    ("after", "calls_at_interval", "calls_at_retry_after"),
+    ("after", "calls_immediately", "calls_at_interval", "calls_at_retry_after"),
     [
-        pytest.param(str(RETRY_AFTER.seconds), 1, 2, id="seconds"),
-        pytest.param(None, 2, 3, id="missing"),
-        pytest.param("Wed, 21 Oct 2026 07:28:00 GMT", 2, 3, id="http-date"),
-        pytest.param("-300", 2, 3, id="negative"),
-        pytest.param("inf", 2, 3, id="infinite"),
+        pytest.param(str(RETRY_AFTER.seconds), 1, 1, 2, id="seconds"),
+        pytest.param("0", 2, 3, 4, id="zero"),
+        pytest.param(None, 1, 2, 3, id="missing"),
+        pytest.param("Wed, 21 Oct 2026 07:28:00 GMT", 1, 2, 3, id="http-date"),
+        pytest.param("-300", 1, 2, 3, id="negative"),
+        pytest.param("inf", 1, 2, 3, id="infinite"),
     ],
 )
 async def test_coordinator_rate_limited(
@@ -128,6 +129,7 @@ async def test_coordinator_rate_limited(
     mock_fixture: str,
     interval: timedelta,
     after: str | None,
+    calls_immediately: int,
     calls_at_interval: int,
     calls_at_retry_after: int,
     request: pytest.FixtureRequest,
@@ -149,6 +151,10 @@ async def test_coordinator_rate_limited(
 
     # A usable Retry-After skips the normal interval, anything else falls back to it.
     mock.side_effect = None
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert mock.call_count == calls_immediately
+
     freezer.tick(interval)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
