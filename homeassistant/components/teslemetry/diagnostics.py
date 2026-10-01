@@ -46,15 +46,8 @@ def _async_vehicle_entity_sources(
 ) -> dict[str, str]:
     """Map each enabled vehicle entity to its data source.
 
-    A listener only costs credits while its coordinator is scheduled to
-    refresh, which needs an update interval - set only when command signing is
-    off - and polling left enabled on the config entry, so listeners are only
-    reported as "polling" when both hold, mirroring the guards in
-    DataUpdateCoordinator._schedule_refresh. "streaming" entities belong to the
-    telemetry stream family. "command" entities only send commands and read no
-    state at all, so no source can be attributed to them. Anything else enabled
-    in the registry, a listener that cannot cause a refresh or an entity whose
-    platform is not loaded, is reported as "enabled".
+    Listeners only count as polling when the coordinator will actually refresh,
+    mirroring the guards in DataUpdateCoordinator._schedule_refresh.
     """
     coordinator = vehicle.coordinator
     polling_ids: set[str] = set()

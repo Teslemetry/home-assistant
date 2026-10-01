@@ -67,9 +67,8 @@ async def test_diagnostics_streaming_vehicle(
 ) -> None:
     """Test a streaming vehicle reports no polling entities and never polls.
 
-    Streaming entities must not carry a coordinator listener context: giving
-    them one would make the vehicle coordinator start polling, which is the
-    behaviour this diagnostics change must not introduce.
+    Streaming entities must not carry a coordinator listener context, as that
+    would make the vehicle coordinator start polling.
     """
 
     entry = await setup_platform(hass)
