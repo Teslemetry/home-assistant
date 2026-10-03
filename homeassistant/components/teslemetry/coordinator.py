@@ -48,6 +48,10 @@ def _get_retry_after(e: TeslaFleetError) -> float:
 
 VEHICLE_INTERVAL = timedelta(seconds=60)
 VEHICLE_WAIT = timedelta(minutes=15)
+
+# Well under the bootstrap STAGE_2_TIMEOUT (300s), so a sleeping vehicle retries setup
+# instead of being cancelled into a setup error that is never retried.
+VEHICLE_FIRST_REFRESH_TIMEOUT = 60
 METADATA_INTERVAL = timedelta(hours=1)
 
 # Start of the day the energy history totals cover. Kept out of
