@@ -19,6 +19,7 @@ from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     ATTR_ENTITY_ID,
+    EVENT_STATE_CHANGED,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
     EntityCategory,
@@ -39,7 +40,7 @@ from .const import (
     VEHICLE_DATA_ALT,
 )
 
-from tests.common import async_fire_time_changed
+from tests.common import async_capture_events, async_fire_time_changed
 
 # VIN used across the Teslemetry test fixtures.
 VEHICLE_VIN = "LRW3F7EK4NC700000"
@@ -49,6 +50,20 @@ ENERGY_HISTORY_ENTITY = "sensor.energy_site_battery_discharged"
 # Assistant runs on US/Pacific in tests, so a last_reset derived from its clock
 # or from the event's created_at cannot produce this.
 SITE_MIDNIGHT = "2024-09-18T00:00:00+10:00"
+
+# Per-tire TPMS warning object as streamed by a Model 3.
+TPMS_NO_WARNINGS = {
+    "frontLeft": False,
+    "frontRight": False,
+    "rearLeft": False,
+    "rearRight": False,
+    "semiMiddleAxleLeft2": False,
+    "semiMiddleAxleRight2": False,
+    "semiRearAxleLeft": False,
+    "semiRearAxleLeft2": False,
+    "semiRearAxleRight": False,
+    "semiRearAxleRight2": False,
+}
 
 
 def _products_with_driver_assist(driver_assist: str) -> dict:
@@ -428,6 +443,105 @@ async def test_sensors_streaming_unit_conversion(
     assert float(state.state) == pytest.approx(expected_state)
 
 
+@pytest.mark.parametrize(
+    ("updates", "expected_delay", "expected_energy"),
+    [
+        pytest.param(
+            [
+                {
+                    Signal.MINUTES_TO_ARRIVAL: 12.5,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 3,
+                    Signal.EXPECTED_ENERGY_PERCENT_AT_TRIP_ARRIVAL: 62,
+                },
+                # The car keeps reporting the last trip's arrival energy and
+                # traffic delay after arriving, but MinutesToArrival goes null.
+                {
+                    Signal.MINUTES_TO_ARRIVAL: None,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 0,
+                    Signal.EXPECTED_ENERGY_PERCENT_AT_TRIP_ARRIVAL: 62,
+                },
+            ],
+            ["3", STATE_UNKNOWN],
+            ["62", STATE_UNKNOWN],
+            id="route_ends",
+        ),
+        pytest.param(
+            [
+                {
+                    Signal.MINUTES_TO_ARRIVAL: 12.5,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 3,
+                },
+                {
+                    Signal.MINUTES_TO_ARRIVAL: None,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 0,
+                },
+                {
+                    Signal.MINUTES_TO_ARRIVAL: 30.0,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 5,
+                },
+            ],
+            ["3", STATE_UNKNOWN, "5"],
+            [],
+            id="route_restarts",
+        ),
+        pytest.param(
+            [
+                {
+                    Signal.MINUTES_TO_ARRIVAL: 12.5,
+                    Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 3,
+                },
+                {Signal.MINUTES_TO_ARRIVAL: None},
+                {Signal.MINUTES_TO_ARRIVAL: 20.0},
+            ],
+            ["3", STATE_UNKNOWN, "3"],
+            [],
+            id="route_restarts_with_unchanged_value",
+        ),
+        pytest.param(
+            [
+                {Signal.ROUTE_TRAFFIC_MINUTES_DELAY: 3},
+                {Signal.MINUTES_TO_ARRIVAL: 12.5},
+            ],
+            ["3"],
+            [],
+            id="waits_for_minutes_to_arrival",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_sensors_streaming_active_route(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    updates: list[dict[Signal, float | None]],
+    expected_delay: list[str],
+    expected_energy: list[str],
+) -> None:
+    """Test the streaming active route sensors only report during navigation."""
+    await setup_platform(hass, [Platform.SENSOR])
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    for data in updates:
+        mock_add_listener.send(
+            {
+                "vin": VEHICLE_DATA_ALT["response"]["vin"],
+                "data": data,
+                "createdAt": "2026-09-28T08:40:00.000Z",
+            }
+        )
+        await hass.async_block_till_done()
+
+    assert [
+        event.data["new_state"].state
+        for event in events
+        if event.data["entity_id"] == "sensor.test_traffic_delay"
+    ] == expected_delay
+    assert [
+        event.data["new_state"].state
+        for event in events
+        if event.data["entity_id"] == "sensor.test_state_of_charge_at_arrival"
+    ] == expected_energy
+
+
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_sensors_streaming_tpms_none_clears_state(
     hass: HomeAssistant,
@@ -458,6 +572,48 @@ async def test_sensors_streaming_tpms_none_clears_state(
     )
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == STATE_UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("signal", "entity_id"),
+    [
+        pytest.param(
+            Signal.TPMS_HARD_WARNINGS,
+            "sensor.test_tire_pressure_hard_warnings",
+            id="hard",
+        ),
+        pytest.param(
+            Signal.TPMS_SOFT_WARNINGS,
+            "sensor.test_tire_pressure_soft_warnings",
+            id="soft",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_sensors_streaming_tpms_warnings(
+    hass: HomeAssistant,
+    mock_add_listener: AsyncMock,
+    signal: Signal,
+    entity_id: str,
+) -> None:
+    """Test TPMS warning sensors report how many tires are in warning."""
+    await setup_platform(hass, [Platform.SENSOR])
+    vin = VEHICLE_DATA_ALT["response"]["vin"]
+
+    for warnings, expected_state in (
+        ({**TPMS_NO_WARNINGS, "frontRight": True, "rearLeft": True}, "2"),
+        (TPMS_NO_WARNINGS, "0"),
+        (None, STATE_UNKNOWN),
+    ):
+        mock_add_listener.send(
+            {
+                "vin": vin,
+                "data": {signal: warnings},
+                "createdAt": "2024-10-04T10:45:17.537Z",
+            }
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(entity_id).state == expected_state
 
 
 @pytest.mark.parametrize(
