@@ -5,7 +5,12 @@ from datetime import timedelta
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from tesla_fleet_api.exceptions import Forbidden, InvalidToken, MissingToken
+from tesla_fleet_api.exceptions import (
+    Forbidden,
+    InvalidToken,
+    MissingToken,
+    RateLimited,
+)
 
 from homeassistant.components.tessie import PLATFORMS
 from homeassistant.components.tessie.const import DOMAIN
@@ -30,6 +35,7 @@ from .common import (
 from tests.common import async_fire_time_changed
 
 WAIT = timedelta(seconds=TESSIE_SYNC_INTERVAL)
+RETRY_AFTER = timedelta(seconds=300)
 
 
 async def test_coordinator_online(
@@ -95,6 +101,69 @@ async def test_coordinator_connection(
     assert isinstance(coordinator.last_exception, UpdateFailed)
     assert coordinator.last_exception.translation_domain == DOMAIN
     assert coordinator.last_exception.translation_key == "cannot_connect"
+
+
+@pytest.mark.parametrize(
+    ("mock_fixture", "interval"),
+    [
+        ("mock_get_state", WAIT),
+        ("mock_live_status", TESSIE_FLEET_API_SYNC_INTERVAL),
+        ("mock_site_info", TESSIE_FLEET_API_SYNC_INTERVAL),
+        ("mock_energy_history", TESSIE_ENERGY_HISTORY_INTERVAL),
+    ],
+    ids=["state", "live", "info", "history"],
+)
+@pytest.mark.parametrize(
+    ("after", "calls_immediately", "calls_at_interval", "calls_at_retry_after"),
+    [
+        pytest.param(str(RETRY_AFTER.seconds), 1, 1, 2, id="seconds"),
+        pytest.param("0", 2, 3, 4, id="zero"),
+        pytest.param(None, 1, 2, 3, id="missing"),
+        pytest.param("Wed, 21 Oct 2026 07:28:00 GMT", 1, 2, 3, id="http-date"),
+        pytest.param("-300", 1, 2, 3, id="negative"),
+        pytest.param("inf", 1, 2, 3, id="infinite"),
+    ],
+)
+async def test_coordinator_rate_limited(
+    hass: HomeAssistant,
+    mock_fixture: str,
+    interval: timedelta,
+    after: str | None,
+    calls_immediately: int,
+    calls_at_interval: int,
+    calls_at_retry_after: int,
+    request: pytest.FixtureRequest,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tests that a 429 defers the next refresh only for a usable Retry-After."""
+
+    mock = request.getfixturevalue(mock_fixture)
+    await setup_platform(hass, [Platform.SENSOR])
+
+    mock.reset_mock()
+    mock.side_effect = RateLimited({"reset": None, "after": after})
+    freezer.tick(interval)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    mock.assert_called_once()
+    assert "Unexpected error" not in caplog.text
+
+    # A usable Retry-After skips the normal interval, anything else falls back to it.
+    mock.side_effect = None
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert mock.call_count == calls_immediately
+
+    freezer.tick(interval)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert mock.call_count == calls_at_interval
+
+    freezer.tick(RETRY_AFTER - interval)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert mock.call_count == calls_at_retry_after
 
 
 async def test_coordinator_live_error(
