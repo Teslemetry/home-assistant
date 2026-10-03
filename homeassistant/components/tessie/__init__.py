@@ -32,6 +32,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN, MODELS
 from .coordinator import (
+    FIRST_REFRESH_TIMEOUT,
     TessieEnergyHistoryCoordinator,
     TessieEnergySiteInfoCoordinator,
     TessieEnergySiteLiveCoordinator,
@@ -128,89 +129,96 @@ async def async_setup_entry(hass: HomeAssistant, entry: TessieConfigEntry) -> bo
     energysites: list[TessieEnergyData] = []
 
     try:
-        scopes = await tessie.scopes()
-    except (TeslaFleetError, ClientError) as e:
-        raise ConfigEntryNotReady from e
+        async with asyncio.timeout(FIRST_REFRESH_TIMEOUT):
+            try:
+                scopes = await tessie.scopes()
+            except (TeslaFleetError, ClientError) as e:
+                raise ConfigEntryNotReady from e
 
-    if Scope.ENERGY_DEVICE_DATA in scopes:
-        try:
-            products = (await tessie.products())["response"]
-        except (TeslaFleetError, ClientError) as e:
-            raise ConfigEntryNotReady from e
-
-        for product in products:
-            if "energy_site_id" in product:
-                site_id = product["energy_site_id"]
-                if not (
-                    product["components"]["battery"]
-                    or product["components"]["solar"]
-                    or "wall_connectors" in product["components"]
-                ):
-                    _LOGGER.debug(
-                        "Skipping Energy Site %s as it has no components",
-                        site_id,
-                    )
-                    continue
-
-                api = tessie.energySites.create(site_id)
-
+            if Scope.ENERGY_DEVICE_DATA in scopes:
                 try:
-                    live_status = (await api.live_status())["response"]
-                except (InvalidToken, Forbidden, SubscriptionRequired) as e:
-                    raise ConfigEntryAuthFailed from e
-                except TeslaFleetError as e:
-                    raise ConfigEntryNotReady(getattr(e, "message", str(e))) from e
-                except ClientError as e:
+                    products = (await tessie.products())["response"]
+                except (TeslaFleetError, ClientError) as e:
                     raise ConfigEntryNotReady from e
 
-                powerwall = (
-                    product["components"]["battery"] or product["components"]["solar"]
-                )
-
-                energysites.append(
-                    TessieEnergyData(
-                        api=api,
-                        id=site_id,
-                        live_coordinator=(
-                            TessieEnergySiteLiveCoordinator(
-                                hass, entry, api, live_status
+                for product in products:
+                    if "energy_site_id" in product:
+                        site_id = product["energy_site_id"]
+                        if not (
+                            product["components"]["battery"]
+                            or product["components"]["solar"]
+                            or "wall_connectors" in product["components"]
+                        ):
+                            _LOGGER.debug(
+                                "Skipping Energy Site %s as it has no components",
+                                site_id,
                             )
-                            if isinstance(live_status, dict)
-                            else None
-                        ),
-                        info_coordinator=TessieEnergySiteInfoCoordinator(
-                            hass, entry, api
-                        ),
-                        history_coordinator=(
-                            TessieEnergyHistoryCoordinator(hass, entry, api)
-                            if powerwall
-                            else None
-                        ),
-                        device=DeviceInfo(
-                            identifiers={(DOMAIN, str(site_id))},
-                            manufacturer="Tesla",
-                            name=product.get("site_name", "Energy Site"),
-                        ),
-                    )
-                )
+                            continue
 
-        # Populate coordinator data before forwarding to platforms
-        await asyncio.gather(
-            *(
-                energysite.live_coordinator.async_config_entry_first_refresh()
-                for energysite in energysites
-                if energysite.live_coordinator is not None
-            ),
-            *(
-                energysite.info_coordinator.async_config_entry_first_refresh()
-                for energysite in energysites
-            ),
-            *(
-                energysite.history_coordinator.async_config_entry_first_refresh()
-                for energysite in energysites
-                if energysite.history_coordinator is not None
-            ),
-        )
+                        api = tessie.energySites.create(site_id)
+
+                        try:
+                            live_status = (await api.live_status())["response"]
+                        except (InvalidToken, Forbidden, SubscriptionRequired) as e:
+                            raise ConfigEntryAuthFailed from e
+                        except TeslaFleetError as e:
+                            raise ConfigEntryNotReady(
+                                getattr(e, "message", str(e))
+                            ) from e
+                        except ClientError as e:
+                            raise ConfigEntryNotReady from e
+
+                        powerwall = (
+                            product["components"]["battery"]
+                            or product["components"]["solar"]
+                        )
+
+                        energysites.append(
+                            TessieEnergyData(
+                                api=api,
+                                id=site_id,
+                                live_coordinator=(
+                                    TessieEnergySiteLiveCoordinator(
+                                        hass, entry, api, live_status
+                                    )
+                                    if isinstance(live_status, dict)
+                                    else None
+                                ),
+                                info_coordinator=TessieEnergySiteInfoCoordinator(
+                                    hass, entry, api
+                                ),
+                                history_coordinator=(
+                                    TessieEnergyHistoryCoordinator(hass, entry, api)
+                                    if powerwall
+                                    else None
+                                ),
+                                device=DeviceInfo(
+                                    identifiers={(DOMAIN, str(site_id))},
+                                    manufacturer="Tesla",
+                                    name=product.get("site_name", "Energy Site"),
+                                ),
+                            )
+                        )
+
+                # Populate coordinator data before forwarding to platforms
+                await asyncio.gather(
+                    *(
+                        energysite.live_coordinator.async_config_entry_first_refresh()
+                        for energysite in energysites
+                        if energysite.live_coordinator is not None
+                    ),
+                    *(
+                        energysite.info_coordinator.async_config_entry_first_refresh()
+                        for energysite in energysites
+                    ),
+                    *(
+                        energysite.history_coordinator.async_config_entry_first_refresh()
+                        for energysite in energysites
+                        if energysite.history_coordinator is not None
+                    ),
+                )
+    except TimeoutError as err:
+        raise ConfigEntryNotReady("Timed out waiting for energy site data") from err
 
     entry.runtime_data = TessieData(vehicles, energysites)
 

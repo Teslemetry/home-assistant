@@ -1,5 +1,6 @@
 """Test the Tessie init."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientConnectionError, ClientError
@@ -153,6 +154,31 @@ async def test_aiohttp_client_error_on_live_status_retries(
         side_effect=exception,
     ):
         entry = await setup_platform(hass)
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+@pytest.mark.parametrize(
+    "stalled",
+    [
+        pytest.param("tesla_fleet_api.tessie.Tessie.scopes", id="scopes"),
+        pytest.param("tesla_fleet_api.tessie.Tessie.products", id="products"),
+        pytest.param("tesla_fleet_api.tessie.EnergySite.live_status", id="live_status"),
+        pytest.param("tesla_fleet_api.tessie.EnergySite.site_info", id="site_info"),
+    ],
+)
+async def test_energy_site_setup_timeout(hass: HomeAssistant, stalled: str) -> None:
+    """Test a stalled energy site call retries setup instead of blocking it."""
+    never = asyncio.Event()
+
+    async def _hang(*args: object, **kwargs: object) -> None:
+        await never.wait()
+
+    with (
+        patch(stalled, side_effect=_hang),
+        patch("homeassistant.components.tessie.FIRST_REFRESH_TIMEOUT", 0.1),
+    ):
+        entry = await setup_platform(hass)
+
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
