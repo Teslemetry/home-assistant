@@ -41,6 +41,8 @@ from homeassistant.components.application_credentials import (
     async_import_client_credential,
 )
 from homeassistant.components.bluetooth import (
+    BluetoothScanningMode,
+    async_current_scanners,
     async_discovered_service_info,
     async_request_active_scan,
     async_scanner_count,
@@ -309,7 +311,17 @@ class VehicleSubentryFlowHandler(ConfigSubentryFlow):
                         break
 
                 if device is None:
-                    errors["base"] = "device_not_found"
+                    modes = [
+                        scanner.requested_mode
+                        for scanner in async_current_scanners(self.hass)
+                        if scanner.connectable
+                    ]
+                    errors["base"] = (
+                        "passive_scanning"
+                        if modes
+                        and all(mode is BluetoothScanningMode.PASSIVE for mode in modes)
+                        else "device_not_found"
+                    )
                 else:
                     # Uses default keepalive so the link survives the on-screen key-approval wait.
                     self._vehicle = parent.vehicles.createBluetooth(
