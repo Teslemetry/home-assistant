@@ -256,19 +256,21 @@ class VehicleSubentryFlowHandler(ConfigSubentryFlow):
             if CONF_VIN in subentry.data
         }
         vehicle_metadata = entry.runtime_data.metadata_coordinator.data["vehicles"]
-        choices = {
+        supported = {
             vehicle.vin: vehicle.device["name"] or vehicle.vin
             for vehicle in entry.runtime_data.vehicles
-            if vehicle.vin not in already_added
             # Vehicles without the command protocol (pre-2021 Model S/X) report
             # False and cannot be controlled over Bluetooth; None or a VIN not
             # yet in the metadata means unknown.
-            and vehicle_metadata.get(vehicle.vin, {}).get("proxy") is not False
+            if vehicle_metadata.get(vehicle.vin, {}).get("proxy") is not False
+        }
+        choices = {
+            vin: title for vin, title in supported.items() if vin not in already_added
         }
         if not choices:
-            if entry.runtime_data.vehicles:
-                return self.async_abort(reason="all_vehicles_added")
-            return self.async_abort(reason="no_vehicles")
+            return self.async_abort(
+                reason="all_vehicles_added" if supported else "no_vehicles"
+            )
 
         if user_input is not None:
             self._vin = user_input[CONF_VIN]
