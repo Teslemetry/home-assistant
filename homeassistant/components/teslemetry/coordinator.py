@@ -1,9 +1,11 @@
 """Teslemetry Data Coordinator."""
 
+from abc import abstractmethod
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, override
 
+from aiopowerwall import PowerwallClient, PowerwallError
 from tesla_fleet_api.const import VehicleDataEndpoint
 from tesla_fleet_api.exceptions import (
     GatewayTimeout,
@@ -49,6 +51,7 @@ def _get_retry_after(e: TeslaFleetError) -> float:
 VEHICLE_INTERVAL = timedelta(seconds=60)
 VEHICLE_WAIT = timedelta(minutes=15)
 METADATA_INTERVAL = timedelta(hours=1)
+LOCAL_STATUS_INTERVAL = timedelta(seconds=10)
 
 # Start of the day the energy history totals cover. Kept out of
 # ENERGY_HISTORY_FIELDS, which is the list of keys that become sensors.
@@ -385,3 +388,68 @@ class TeslemetryEnergyHistoryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tzinfo=self.time_zone or dt_util.get_default_time_zone(),
         )
         self.async_set_updated_data(data)
+
+
+class TeslemetryLocalCoordinator[_DataT](DataUpdateCoordinator[_DataT]):
+    """Base class for polling a locally paired Powerwall gateway."""
+
+    config_entry: TeslemetryConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config_entry: TeslemetryConfigEntry,
+        client: PowerwallClient,
+        name: str,
+        update_interval: timedelta,
+    ) -> None:
+        """Initialize a local Powerwall coordinator."""
+        super().__init__(
+            hass,
+            LOGGER,
+            config_entry=config_entry,
+            name=name,
+            update_interval=update_interval,
+        )
+        self.client = client
+
+    @abstractmethod
+    async def _async_fetch(self) -> _DataT:
+        """Fetch the payload from the local gateway."""
+
+    @override
+    async def _async_update_data(self) -> _DataT:
+        """Update data from the local gateway."""
+        try:
+            return await self._async_fetch()
+        except PowerwallError as e:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="local_update_failed",
+                translation_placeholders={"message": str(e)},
+            ) from e
+
+
+class TeslemetryLocalStatusCoordinator(TeslemetryLocalCoordinator[dict[str, Any]]):
+    """Class to poll the status of a locally paired Powerwall gateway."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config_entry: TeslemetryConfigEntry,
+        client: PowerwallClient,
+        site_id: int,
+    ) -> None:
+        """Initialize the local Powerwall status coordinator."""
+        super().__init__(
+            hass,
+            config_entry,
+            client,
+            f"Teslemetry Powerwall Status {site_id}",
+            LOCAL_STATUS_INTERVAL,
+        )
+
+    @override
+    async def _async_fetch(self) -> dict[str, Any]:
+        """Fetch the gateway status."""
+        return await self.client.get_status()
