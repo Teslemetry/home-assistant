@@ -16,6 +16,7 @@ from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
+    TeslemetryLocalConfigCoordinator,
     TeslemetryLocalStatusCoordinator,
     TeslemetryMetadataCoordinator,
     TeslemetryVehicleDataCoordinator,
@@ -64,3 +65,4 @@ class TeslemetryEnergyData:
     subentry_id: str | None
     # Only set when the site is paired with its local gateway.
     local_status_coordinator: TeslemetryLocalStatusCoordinator | None = None
+    local_config_coordinator: TeslemetryLocalConfigCoordinator | None = None
