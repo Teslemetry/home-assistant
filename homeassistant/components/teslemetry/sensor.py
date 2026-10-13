@@ -25,6 +25,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
+    UnitOfFrequency,
     UnitOfLength,
     UnitOfPower,
     UnitOfPressure,
@@ -46,6 +47,7 @@ from .entity import (
     TeslemetryEnergyHistoryEntity,
     TeslemetryEnergyInfoEntity,
     TeslemetryEnergyLiveEntity,
+    TeslemetryEnergyLocalStatusEntity,
     TeslemetryVehiclePollingEntity,
     TeslemetryVehicleStreamEntity,
     TeslemetryWallConnectorEntity,
@@ -1659,6 +1661,56 @@ ENERGY_HISTORY_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = tuple(
 )
 
 
+def _islander_measurement(field: str) -> Callable[[dict[str, Any]], float | None]:
+    """Return a function reading an islander AC measurement from the gateway status."""
+
+    def value_fn(data: dict[str, Any]) -> float | None:
+        value: Any = data
+        for key in ("esCan", "bus", "ISLANDER", "ISLAND_AcMeasurements", field):
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        return value if isinstance(value, int | float) else None
+
+    return value_fn
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeslemetryLocalSensorEntityDescription(SensorEntityDescription):
+    """Describes a Teslemetry sensor read from the local gateway."""
+
+    value_fn: Callable[[dict[str, Any]], StateType]
+
+
+ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, ...] = (
+    *(
+        TeslemetryLocalSensorEntityDescription(
+            key=f"island_freq_l{phase}_{side.lower()}",
+            value_fn=_islander_measurement(f"ISLAND_FreqL{phase}_{side}"),
+            device_class=SensorDeviceClass.FREQUENCY,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfFrequency.HERTZ,
+            entity_registry_enabled_default=False,
+        )
+        for phase in (1, 2, 3)
+        for side in ("Load", "Main")
+    ),
+    *(
+        TeslemetryLocalSensorEntityDescription(
+            key=f"island_voltage_l{phase}n_{side.lower()}",
+            value_fn=_islander_measurement(f"ISLAND_VL{phase}N_{side}"),
+            device_class=SensorDeviceClass.VOLTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+            # Single phase sites report near zero on L2 and L3.
+            entity_registry_enabled_default=phase == 1,
+        )
+        for phase in (1, 2, 3)
+        for side in ("Load", "Main")
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: TeslemetryConfigEntry,
@@ -1741,6 +1793,16 @@ async def async_setup_entry(
             "solar" not in description.key
             or energysite.info_coordinator.data.get("components_solar")
         )
+    )
+
+    entities.extend(
+        TeslemetryEnergyLocalSensorEntity(energysite, description)
+        for energysite in entry.runtime_data.energysites
+        if (coordinator := energysite.local_status_coordinator)
+        for description in ENERGY_LOCAL_STATUS_DESCRIPTIONS
+        # Without a first status, add every sensor so they recover with the gateway.
+        if coordinator.data is None
+        or description.value_fn(coordinator.data) is not None
     )
 
     if entry.runtime_data.stream is not None:
@@ -1980,6 +2042,29 @@ class TeslemetryEnergyHistorySensorEntity(TeslemetryEnergyHistoryEntity, SensorE
         """Update the attributes of the sensor."""
         self._attr_native_value = self._value
         self._attr_last_reset = self.coordinator.data.get(PERIOD_START)
+
+
+class TeslemetryEnergyLocalSensorEntity(
+    TeslemetryEnergyLocalStatusEntity, SensorEntity
+):
+    """Teslemetry energy sensor read from the local gateway."""
+
+    entity_description: TeslemetryLocalSensorEntityDescription
+
+    def __init__(
+        self,
+        data: TeslemetryEnergyData,
+        description: TeslemetryLocalSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        self.entity_description = description
+        super().__init__(data, description.key)
+
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.entity_description.value_fn(self.coordinator.data)
 
 
 class TeslemetryCreditBalanceSensor(RestoreSensor):
