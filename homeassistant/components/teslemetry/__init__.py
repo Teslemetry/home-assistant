@@ -88,6 +88,7 @@ from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
+    TeslemetryLocalConfigCoordinator,
     TeslemetryLocalStatusCoordinator,
     TeslemetryMetadataCoordinator,
     TeslemetryVehicleDataCoordinator,
@@ -827,6 +828,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                 if isinstance(energy_site_api, EnergySiteRouter)
                 else None
             )
+            local_config_coordinator = (
+                TeslemetryLocalConfigCoordinator(
+                    hass, entry, energy_site_api.primary.powerwall, site_id
+                )
+                if isinstance(energy_site_api, EnergySiteRouter)
+                else None
+            )
 
             energysites.append(
                 TeslemetryEnergyData(
@@ -839,6 +847,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                     can_local_control=can_local_control,
                     subentry_id=subentry_id,
                     local_status_coordinator=local_status_coordinator,
+                    local_config_coordinator=local_config_coordinator,
                 )
             )
 
@@ -1063,6 +1072,8 @@ async def _async_refresh_energy_site(energysite: TeslemetryEnergyData) -> None:
     if energysite.local_status_coordinator is not None:
         # A local gateway failure must not block the cloud entities.
         await energysite.local_status_coordinator.async_refresh()
+    if energysite.local_config_coordinator is not None:
+        await energysite.local_config_coordinator.async_refresh()
     if energysite.history_coordinator is not None:
         await energysite.history_coordinator.async_set_time_zone(
             energysite.info_coordinator.data.get("installation_time_zone")
