@@ -194,6 +194,34 @@ VEHICLE_DESCRIPTIONS: tuple[TeslemetryBinarySensorEntityDescription, ...] = (
         entity_registry_enabled_default=False,
     ),
     TeslemetryBinarySensorEntityDescription(
+        key="vehicle_state_tpms_hard_warning_fl",
+        polling=True,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    TeslemetryBinarySensorEntityDescription(
+        key="vehicle_state_tpms_hard_warning_fr",
+        polling=True,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    TeslemetryBinarySensorEntityDescription(
+        key="vehicle_state_tpms_hard_warning_rl",
+        polling=True,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    TeslemetryBinarySensorEntityDescription(
+        key="vehicle_state_tpms_hard_warning_rr",
+        polling=True,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    TeslemetryBinarySensorEntityDescription(
         key="vehicle_state_fd_window",
         polling=True,
         streaming_listener=lambda vehicle, callback: vehicle.listen_FrontDriverWindow(

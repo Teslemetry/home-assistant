@@ -326,6 +326,18 @@
       "vehicle_state_rp_window": {
         "name": "Rear passenger window"
       },
+      "vehicle_state_tpms_hard_warning_fl": {
+        "name": "Tire pressure hard warning front left"
+      },
+      "vehicle_state_tpms_hard_warning_fr": {
+        "name": "Tire pressure hard warning front right"
+      },
+      "vehicle_state_tpms_hard_warning_rl": {
+        "name": "Tire pressure hard warning rear left"
+      },
+      "vehicle_state_tpms_hard_warning_rr": {
+        "name": "Tire pressure hard warning rear right"
+      },
       "vehicle_state_tpms_soft_warning_fl": {
         "name": "Tire pressure warning front left"
       },
