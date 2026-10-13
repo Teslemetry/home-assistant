@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, override
 
+from aiopowerwall import current_power
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
 from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
@@ -46,6 +47,7 @@ from .entity import (
     TeslemetryEnergyHistoryEntity,
     TeslemetryEnergyInfoEntity,
     TeslemetryEnergyLiveEntity,
+    TeslemetryEnergyLocalStatusEntity,
     TeslemetryVehiclePollingEntity,
     TeslemetryVehicleStreamEntity,
     TeslemetryWallConnectorEntity,
@@ -1603,6 +1605,46 @@ ENERGY_LIVE_DESCRIPTIONS: tuple[TeslemetryEnergySensorEntityDescription, ...] = 
 )
 
 
+def _meter_power(location: str) -> Callable[[dict[str, Any]], StateType]:
+    """Return a function reading a meter location's power from the gateway status."""
+
+    def value_fn(data: dict[str, Any]) -> StateType:
+        return current_power(data).get(location)
+
+    return value_fn
+
+
+@dataclass(frozen=True, kw_only=True)
+class TeslemetryLocalSensorEntityDescription(SensorEntityDescription):
+    """Describes a Teslemetry sensor read from the local gateway."""
+
+    value_fn: Callable[[dict[str, Any]], StateType]
+
+
+ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, ...] = (
+    TeslemetryLocalSensorEntityDescription(
+        key="solar_rgm_power",
+        value_fn=_meter_power("SOLAR_RGM"),
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_unit_of_measurement=UnitOfPower.KILO_WATT,
+        suggested_display_precision=2,
+        device_class=SensorDeviceClass.POWER,
+        entity_registry_enabled_default=False,
+    ),
+    TeslemetryLocalSensorEntityDescription(
+        key="conductor_power",
+        value_fn=_meter_power("CONDUCTOR"),
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_unit_of_measurement=UnitOfPower.KILO_WATT,
+        suggested_display_precision=2,
+        device_class=SensorDeviceClass.POWER,
+        entity_registry_enabled_default=False,
+    ),
+)
+
+
 @dataclass(frozen=True, kw_only=True)
 class TeslemetrySensorEntityDescription(SensorEntityDescription):
     """Describes Teslemetry Sensor entity."""
@@ -1711,6 +1753,16 @@ async def async_setup_entry(
             description.key == "percentage_charged"
             and energysite.info_coordinator.data.get("components_battery")
         )
+    )
+
+    entities.extend(
+        TeslemetryEnergyLocalSensorEntity(energysite, description)
+        for energysite in entry.runtime_data.energysites
+        if (coordinator := energysite.local_status_coordinator)
+        for description in ENERGY_LOCAL_STATUS_DESCRIPTIONS
+        # Without a first status, add every sensor so they recover with the gateway.
+        if coordinator.data is None
+        or description.value_fn(coordinator.data) is not None
     )
 
     entities.extend(
@@ -1913,6 +1965,29 @@ class TeslemetryEnergyLiveSensorEntity(TeslemetryEnergyLiveEntity, SensorEntity)
         """Update the attributes of the sensor."""
         self._attr_available = not self.is_none
         self._attr_native_value = self.entity_description.value_fn(self._value)
+
+
+class TeslemetryEnergyLocalSensorEntity(
+    TeslemetryEnergyLocalStatusEntity, SensorEntity
+):
+    """Teslemetry energy sensor read from the local gateway."""
+
+    entity_description: TeslemetryLocalSensorEntityDescription
+
+    def __init__(
+        self,
+        data: TeslemetryEnergyData,
+        description: TeslemetryLocalSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        self.entity_description = description
+        super().__init__(data, description.key)
+
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.entity_description.value_fn(self.coordinator.data)
 
 
 class TeslemetryWallConnectorSensorEntity(TeslemetryWallConnectorEntity, SensorEntity):

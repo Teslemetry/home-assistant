@@ -2,29 +2,21 @@
 
 from copy import deepcopy
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from aiopowerwall import PowerwallConnectionError
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from syrupy.assertion import SnapshotAssertion
 from teslemetry_stream import Signal
 
-from homeassistant.components.teslemetry.const import (
-    CONF_SITE_ID,
-    DOMAIN,
-    SUBENTRY_TYPE_ENERGY_SITE,
-)
+from homeassistant.components.teslemetry.const import DOMAIN
 from homeassistant.components.teslemetry.coordinator import (
     LOCAL_STATUS_INTERVAL,
     VEHICLE_INTERVAL,
 )
-from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
-    CONF_HOST,
-    CONF_PASSWORD,
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
@@ -34,12 +26,18 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
-from . import assert_entities, assert_entities_alt, mock_config_entry, setup_platform
+from . import (
+    PAIRED_SITE_ID,
+    assert_entities,
+    assert_entities_alt,
+    setup_paired_platform,
+    setup_platform,
+)
 from .const import METADATA, POWERWALL_STATUS, VEHICLE_DATA_ALT
 
 from tests.common import MockConfigEntry, async_fire_time_changed, mock_restore_cache
 
-SITE_ID = 123456
+SITE_ID = PAIRED_SITE_ID
 LOCAL_STATUS_KEYS = (
     "contactor_closed",
     "escan_firmware_updating",
@@ -48,17 +46,6 @@ LOCAL_STATUS_KEYS = (
     "pw3can_firmware_updating",
     "site_manager_running",
     "site_running",
-)
-
-# aiopowerwall's PowerwallClient parses the PEM at construction time, so tests
-# that build one need a real (if undersized, for speed) RSA key rather than
-# arbitrary bytes.
-_TEST_RSA_KEY_PEM = rsa.generate_private_key(
-    public_exponent=65537, key_size=1024
-).private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.TraditionalOpenSSL,
-    encryption_algorithm=serialization.NoEncryption(),
 )
 
 
@@ -242,39 +229,7 @@ async def test_gps_state_requires_location_scope(
 
 async def _setup_paired(hass: HomeAssistant) -> MockConfigEntry:
     """Set up the binary sensor platform with the energy site paired locally."""
-    entry = mock_config_entry()
-    entry = MockConfigEntry(
-        domain=entry.domain,
-        version=entry.version,
-        minor_version=entry.minor_version,
-        unique_id=entry.unique_id,
-        data=dict(entry.data),
-        subentries_data=[
-            ConfigSubentryData(
-                subentry_type=SUBENTRY_TYPE_ENERGY_SITE,
-                unique_id=str(SITE_ID),
-                title="Energy Site",
-                data={
-                    CONF_SITE_ID: SITE_ID,
-                    CONF_HOST: "192.168.91.1",
-                    CONF_PASSWORD: "abcde",
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-    with (
-        patch(
-            "homeassistant.components.teslemetry._async_get_rsa_key_pem",
-            return_value=_TEST_RSA_KEY_PEM,
-        ),
-        patch(
-            "homeassistant.components.teslemetry.PLATFORMS", [Platform.BINARY_SENSOR]
-        ),
-    ):
-        await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
+    return await setup_paired_platform(hass, [Platform.BINARY_SENSOR])
 
 
 def _local_entity_ids(entity_registry: er.EntityRegistry) -> dict[str, str]:
