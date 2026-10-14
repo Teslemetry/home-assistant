@@ -1,6 +1,8 @@
 """Update platform for Teslemetry integration."""
 
-from typing import Any, override
+from dataclasses import asdict, dataclass
+from datetime import timedelta
+from typing import Any, Self, override
 
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
@@ -14,7 +16,8 @@ from homeassistant.components.update import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from . import TeslemetryConfigEntry
 from .entity import (
@@ -30,6 +33,9 @@ DOWNLOADING = "downloading"
 INSTALLING = "installing"
 WIFI_WAIT = "downloading_wifi_wait"
 SCHEDULED = "scheduled"
+
+# The start time is vehicle local time read as UTC, so allow for the timezone skew
+SCHEDULED_EXPIRY = timedelta(days=1)
 
 PARALLEL_UPDATES = 0
 
@@ -133,6 +139,23 @@ class TeslemetryVehiclePollingUpdateEntity(
             self._attr_update_percentage = None
 
 
+@dataclass
+class TeslemetryUpdateExtraStoredData(ExtraStoredData):
+    """Scheduled start time stored with the update state."""
+
+    scheduled_start_time: int | None
+
+    @override
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the scheduled start time."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self:
+        """Initialize the scheduled start time from a dict."""
+        return cls(restored["scheduled_start_time"])
+
+
 class TeslemetryStreamingUpdateEntity(
     TeslemetryVehicleStreamEntity, TeslemetryUpdateEntity, RestoreEntity
 ):
@@ -140,7 +163,7 @@ class TeslemetryStreamingUpdateEntity(
 
     _download_percentage: int = 0
     _install_percentage: int = 0
-    _scheduled: bool = False
+    _scheduled_start_time: int | None = None
 
     def __init__(
         self,
@@ -179,7 +202,13 @@ class TeslemetryStreamingUpdateEntity(
                 self._attr_update_percentage = state.attributes.get(
                     UpdateEntityStateAttribute.UPDATE_PERCENTAGE
                 )
-                self._scheduled = self._attr_in_progress
+            if (extra_data := await self.async_get_last_extra_data()) is not None:
+                self._scheduled_start_time = TeslemetryUpdateExtraStoredData.from_dict(
+                    extra_data.as_dict()
+                ).scheduled_start_time
+            # Without a percentage, in progress came from a schedule that may have expired
+            if self._attr_update_percentage is None:
+                self._async_update_progress()
             self.async_write_ha_state()
 
         self.async_on_remove(
@@ -235,7 +264,7 @@ class TeslemetryStreamingUpdateEntity(
     ) -> None:
         """Handle software update scheduled start time."""
 
-        self._scheduled = value is not None
+        self._scheduled_start_time = value
         self._async_update_progress()
         self.async_write_ha_state()
 
@@ -258,6 +287,12 @@ class TeslemetryStreamingUpdateEntity(
             self.async_write_ha_state()
 
     @property
+    @override
+    def extra_restore_state_data(self) -> TeslemetryUpdateExtraStoredData:
+        """Return the scheduled start time to restore."""
+        return TeslemetryUpdateExtraStoredData(self._scheduled_start_time)
+
+    @property
     def _up_to_date(self) -> bool:
         """Return True when the installed version matches the known latest version."""
         return (
@@ -274,7 +309,12 @@ class TeslemetryStreamingUpdateEntity(
         elif 10 < self._install_percentage < 100:
             self._attr_in_progress = True
             self._attr_update_percentage = self._install_percentage
-        elif self._scheduled and not self._up_to_date:
+        elif (
+            self._scheduled_start_time is not None
+            and self._scheduled_start_time
+            > (dt_util.utcnow() - SCHEDULED_EXPIRY).timestamp()
+            and not self._up_to_date
+        ):
             self._attr_in_progress = True
             self._attr_update_percentage = None
         else:

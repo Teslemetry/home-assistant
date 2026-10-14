@@ -1,6 +1,7 @@
 """Test the Teslemetry update platform."""
 
 import copy
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
@@ -14,11 +15,22 @@ from homeassistant.components.update import DOMAIN as UPDATE_DOMAIN, SERVICE_INS
 from homeassistant.const import ATTR_ENTITY_ID, STATE_ON, Platform
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.restore_state import STORAGE_KEY as RESTORE_STATE_KEY
 
 from . import assert_entities, reload_platform, setup_platform
 from .const import COMMAND_OK, VEHICLE_DATA, VEHICLE_DATA_ALT
 
-from tests.common import async_fire_time_changed, mock_restore_cache
+from tests.common import (
+    async_fire_time_changed,
+    async_mock_restore_state_shutdown_restart,
+    mock_restore_cache,
+    mock_restore_cache_with_extra_data,
+)
+
+NOW = "2026-09-02T21:00:00+00:00"
+# A schedule from a vehicle that installed days earlier but never streamed the clear
+STALE_SCHEDULED_START_TIME = 1788181518
+FRESH_SCHEDULED_START_TIME = 1788382800
 
 
 async def test_update(
@@ -206,11 +218,13 @@ async def test_update_streaming(
 async def test_update_streaming_scheduled_not_clobbered(
     hass: HomeAssistant,
     snapshot: SnapshotAssertion,
+    freezer: FrozenDateTimeFactory,
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
 ) -> None:
     """Test that a scheduled install stays in progress until real progress or cancellation."""
 
+    freezer.move_to("2025-01-01T00:00:00+00:00")
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     await setup_platform(hass, [Platform.UPDATE])
 
@@ -319,11 +333,13 @@ async def test_update_streaming_restore_completed_not_in_progress(
 
 async def test_update_streaming_completed_while_scheduled(
     hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
     mock_vehicle_data: AsyncMock,
     mock_add_listener: AsyncMock,
 ) -> None:
     """Test a scheduled flag does not strand in_progress once installed == latest."""
 
+    freezer.move_to("2025-01-01T00:00:00+00:00")
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
     await setup_platform(hass, [Platform.UPDATE])
 
@@ -360,6 +376,111 @@ async def test_update_streaming_completed_while_scheduled(
     await hass.async_block_till_done()
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is False
+    assert state.attributes["update_percentage"] is None
+
+
+@pytest.mark.parametrize(
+    ("scheduled_start_time", "expected_in_progress"),
+    [
+        pytest.param(STALE_SCHEDULED_START_TIME, False, id="stale"),
+        pytest.param(FRESH_SCHEDULED_START_TIME, True, id="fresh"),
+    ],
+)
+async def test_update_streaming_scheduled_expiry(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer: FrozenDateTimeFactory,
+    mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    scheduled_start_time: int,
+    expected_in_progress: bool,
+) -> None:
+    """Test a scheduled start time long in the past no longer counts as in progress."""
+
+    freezer.move_to(NOW)
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    await setup_platform(hass, [Platform.UPDATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {
+                Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 0,
+                Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: 1,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: scheduled_start_time,
+                Signal.SOFTWARE_UPDATE_VERSION: "2026.32.1",
+                Signal.VERSION: "2026.26.6",
+            },
+            "createdAt": "2026-09-02T21:00:00.000Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is expected_in_progress
+    assert state.attributes["update_percentage"] is None
+
+    # The start time is stored so a restart can judge the schedule again
+    await async_mock_restore_state_shutdown_restart(hass)
+    stored = {
+        stored_state["state"]["entity_id"]: stored_state["extra_data"]
+        for stored_state in hass_storage[RESTORE_STATE_KEY]["data"]
+    }
+    assert stored["update.test_update"] == {
+        "scheduled_start_time": scheduled_start_time
+    }
+
+
+@pytest.mark.parametrize(
+    ("extra_data", "expected_in_progress"),
+    [
+        pytest.param(None, False, id="no_stored_start_time"),
+        pytest.param(
+            {"scheduled_start_time": STALE_SCHEDULED_START_TIME},
+            False,
+            id="stale_start_time",
+        ),
+        pytest.param(
+            {"scheduled_start_time": FRESH_SCHEDULED_START_TIME},
+            True,
+            id="fresh_start_time",
+        ),
+    ],
+)
+async def test_update_streaming_restore_scheduled(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_vehicle_data: AsyncMock,
+    extra_data: dict[str, int] | None,
+    expected_in_progress: bool,
+) -> None:
+    """Test a restored scheduled in-progress flag clears unless the schedule is fresh."""
+
+    freezer.move_to(NOW)
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    entity_id = "update.test_update"
+    mock_restore_cache_with_extra_data(
+        hass,
+        (
+            (
+                State(
+                    entity_id,
+                    STATE_ON,
+                    attributes={
+                        "in_progress": True,
+                        "update_percentage": None,
+                        "installed_version": "2026.26.6",
+                        "latest_version": "2026.32.1",
+                    },
+                ),
+                extra_data,
+            ),
+        ),
+    )
+
+    await setup_platform(hass, [Platform.UPDATE])
+
+    state = hass.states.get(entity_id)
+    assert state.attributes["in_progress"] is expected_in_progress
     assert state.attributes["update_percentage"] is None
 
 
