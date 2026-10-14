@@ -497,9 +497,12 @@ def _async_check_gateway_din(
     din: str | None,
 ) -> bool:
     """Return whether the connected gateway is the site's own, raising a repair if not."""
-    if not expected_din or din is None:
-        return True
     issue_id = _gateway_mismatch_issue_id(site_id)
+    if not expected_din:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return True
+    if din is None:
+        return True
     if din == expected_din:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return True

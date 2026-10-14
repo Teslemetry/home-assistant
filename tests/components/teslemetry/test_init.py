@@ -2072,6 +2072,16 @@ async def test_local_gateway_without_cloud_din_keeps_local_control(
     mock_products.return_value = products
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
+    # A repair from an earlier setup must not outlive the DIN it compared against.
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        MISMATCH_ISSUE_ID,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="gateway_mismatch",
+        translation_placeholders={"site": "Energy Site", "host": HOST},
+    )
 
     await _setup_entry_with_gateway_din(
         hass, entry, mock_powerwall_connect, OTHER_GATEWAY_DIN
