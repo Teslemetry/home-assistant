@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from functools import partial
+import logging
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -502,7 +503,11 @@ def _async_check_gateway_din(
     if din == expected_din:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return True
-    LOGGER.warning(
+    # Every command re-checks a mismatched gateway, so only the first is a warning.
+    LOGGER.log(
+        logging.DEBUG
+        if ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        else logging.WARNING,
         "Local gateway at %s for energy site %s reports DIN %s instead of %s; "
         "commands will fall back to cloud control",
         client.host,

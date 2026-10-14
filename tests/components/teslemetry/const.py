@@ -70,6 +70,9 @@ ENERGY_TOTALS = {
 # An empty or malformed day: every field comes back null.
 ENERGY_TOTALS_NULL = dict.fromkeys(ENERGY_TOTALS)
 
+# The paired site's `gateway_id` in the products fixture.
+GATEWAY_DIN = "ABC123"
+
 COMMAND_OK = {"response": {"result": True, "reason": ""}}
 COMMAND_REASON = {"response": {"result": False, "reason": "already closed"}}
 COMMAND_IGNORED_REASON = {"response": {"result": False, "reason": "already_set"}}

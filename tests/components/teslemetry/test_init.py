@@ -129,6 +129,7 @@ from .const import (
     ADDRESS,
     COMMAND_OK,
     CONFIG_V1,
+    GATEWAY_DIN,
     LIVE_STATUS,
     METADATA,
     METADATA_NOSCOPE,
@@ -1376,8 +1377,6 @@ PASSWORD = "abcde"
 GATEWAY_ISSUE_ID = f"gateway_not_found_{SITE_ID}"
 MISMATCH_ISSUE_ID = f"gateway_mismatch_{SITE_ID}"
 BACKUP_RESERVE_ENTITY_ID = "number.energy_site_backup_reserve"
-# The gateway_id the products fixture reports for SITE_ID.
-GATEWAY_DIN = "ABC123"
 OTHER_GATEWAY_DIN = "1707000-30-L--TG00000000000A"
 
 # aiopowerwall's PowerwallClient parses the PEM at construction time, so tests
@@ -1946,9 +1945,13 @@ async def test_local_gateway_repair_cleared_without_subentry(
 
 
 async def _setup_entry_with_gateway_din(
-    hass: HomeAssistant, entry: MockConfigEntry, din: str | None
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    mock_powerwall_connect: AsyncMock,
+    din: str | None,
 ) -> None:
     """Set up an entry's number platform with its paired gateway reporting din."""
+    mock_powerwall_connect.return_value = din
     with (
         patch(
             "homeassistant.components.teslemetry._async_get_rsa_key_pem",
@@ -1986,13 +1989,17 @@ async def _set_backup_reserve(hass: HomeAssistant) -> tuple[AsyncMock, AsyncMock
 
 
 async def test_local_gateway_din_match_keeps_local_control(
-    hass: HomeAssistant, issue_registry: ir.IssueRegistry
+    hass: HomeAssistant,
+    issue_registry: ir.IssueRegistry,
+    mock_powerwall_connect: AsyncMock,
 ) -> None:
     """A gateway whose DIN matches the site's keeps local control."""
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
 
-    await _setup_entry_with_gateway_din(hass, entry, GATEWAY_DIN)
+    await _setup_entry_with_gateway_din(
+        hass, entry, mock_powerwall_connect, GATEWAY_DIN
+    )
     local, cloud = await _set_backup_reserve(hass)
 
     local.assert_awaited_once_with(80)
@@ -2001,13 +2008,17 @@ async def test_local_gateway_din_match_keeps_local_control(
 
 
 async def test_local_gateway_din_mismatch_raises_repair(
-    hass: HomeAssistant, issue_registry: ir.IssueRegistry
+    hass: HomeAssistant,
+    issue_registry: ir.IssueRegistry,
+    mock_powerwall_connect: AsyncMock,
 ) -> None:
     """A gateway reporting another DIN is not used and raises a repair."""
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
 
-    await _setup_entry_with_gateway_din(hass, entry, OTHER_GATEWAY_DIN)
+    await _setup_entry_with_gateway_din(
+        hass, entry, mock_powerwall_connect, OTHER_GATEWAY_DIN
+    )
     local, cloud = await _set_backup_reserve(hass)
 
     assert entry.state is ConfigEntryState.LOADED
@@ -2021,17 +2032,23 @@ async def test_local_gateway_din_mismatch_raises_repair(
 
 
 async def test_local_gateway_din_mismatch_repair_cleared_after_match(
-    hass: HomeAssistant, issue_registry: ir.IssueRegistry
+    hass: HomeAssistant,
+    issue_registry: ir.IssueRegistry,
+    mock_powerwall_connect: AsyncMock,
 ) -> None:
     """The mismatch repair clears once a later setup reaches the site's gateway."""
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
 
-    await _setup_entry_with_gateway_din(hass, entry, OTHER_GATEWAY_DIN)
+    await _setup_entry_with_gateway_din(
+        hass, entry, mock_powerwall_connect, OTHER_GATEWAY_DIN
+    )
     assert issue_registry.async_get_issue(DOMAIN, MISMATCH_ISSUE_ID) is not None
 
     await hass.config_entries.async_unload(entry.entry_id)
-    await _setup_entry_with_gateway_din(hass, entry, GATEWAY_DIN)
+    await _setup_entry_with_gateway_din(
+        hass, entry, mock_powerwall_connect, GATEWAY_DIN
+    )
     local, cloud = await _set_backup_reserve(hass)
 
     local.assert_awaited_once_with(80)
@@ -2046,6 +2063,7 @@ async def test_local_gateway_without_cloud_din_keeps_local_control(
     hass: HomeAssistant,
     issue_registry: ir.IssueRegistry,
     mock_products: AsyncMock,
+    mock_powerwall_connect: AsyncMock,
     gateway_id: str | None,
 ) -> None:
     """A site whose gateway DIN the cloud does not report keeps local control."""
@@ -2055,7 +2073,9 @@ async def test_local_gateway_without_cloud_din_keeps_local_control(
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
 
-    await _setup_entry_with_gateway_din(hass, entry, OTHER_GATEWAY_DIN)
+    await _setup_entry_with_gateway_din(
+        hass, entry, mock_powerwall_connect, OTHER_GATEWAY_DIN
+    )
     local, cloud = await _set_backup_reserve(hass)
 
     local.assert_awaited_once_with(80)
@@ -2086,7 +2106,7 @@ async def test_local_gateway_din_checked_on_later_connection(
     entry = _entry_with_powerwall()
     entry.add_to_hass(hass)
     mock_powerwall_connect.side_effect = PowerwallRateLimitError("busy")
-    await _setup_entry_with_gateway_din(hass, entry, None)
+    await _setup_entry_with_gateway_din(hass, entry, mock_powerwall_connect, None)
 
     mock_powerwall_connect.side_effect = [connect_result]
     local, cloud = await _set_backup_reserve(hass)
@@ -2096,6 +2116,29 @@ async def test_local_gateway_din_checked_on_later_connection(
     assert (
         issue_registry.async_get_issue(DOMAIN, MISMATCH_ISSUE_ID) is not None
     ) is issue_raised
+
+
+async def test_local_gateway_din_mismatch_warns_once(
+    hass: HomeAssistant,
+    mock_powerwall_connect: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Commands that keep finding another gateway log only the first as a warning."""
+    entry = _entry_with_powerwall()
+    entry.add_to_hass(hass)
+    mock_powerwall_connect.side_effect = PowerwallRateLimitError("busy")
+    await _setup_entry_with_gateway_din(hass, entry, mock_powerwall_connect, None)
+
+    mock_powerwall_connect.side_effect = [OTHER_GATEWAY_DIN, OTHER_GATEWAY_DIN]
+    with caplog.at_level(logging.DEBUG):
+        await _set_backup_reserve(hass)
+        await _set_backup_reserve(hass)
+
+    assert [
+        record.levelno
+        for record in caplog.records
+        if f"reports DIN {OTHER_GATEWAY_DIN}" in record.message
+    ] == [logging.WARNING, logging.DEBUG]
 
 
 async def test_local_gateway_mismatch_repair_cleared_without_subentry(
