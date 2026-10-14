@@ -375,6 +375,6 @@ def mock_stream_connected():
 def mock_powerwall_connect() -> Generator[AsyncMock]:
     """Mock the local Powerwall gateway connection."""
     with patch(
-        "aiopowerwall.PowerwallClient.connect", return_value="GATEWAY-DIN"
+        "aiopowerwall.PowerwallClient.connect", return_value="ABC123"
     ) as mock_connect:
         yield mock_connect
