@@ -72,6 +72,7 @@ from .const import (
     CLIENT_ID,
     CONF_VIN,
     DOMAIN,
+    ISSUE_GATEWAY_MISMATCH,
     ISSUE_GATEWAY_NOT_FOUND,
     LOGGER,
     POWERWALL_KEY_FILE,
@@ -437,6 +438,7 @@ async def _async_resolve_local_control(
     battery: bool,
     site_id: int,
     cloud_energy_site: TeslemetryEnergySite,
+    gateway_din: str | None,
 ) -> tuple[bool, str | None, EnergySite | EnergySiteRouter]:
     """Resolve opt-in local control for an energy site."""
     # Only a battery/Powerwall gateway can pair for local (TEDAPI) control.
@@ -445,11 +447,12 @@ async def _async_resolve_local_control(
     subentry_id = _find_energy_subentry_id(entry, site_id)
     if subentry_id is None:
         ir.async_delete_issue(hass, DOMAIN, _gateway_issue_id(site_id))
+        ir.async_delete_issue(hass, DOMAIN, _gateway_mismatch_issue_id(site_id))
         return True, None, cloud_energy_site
     # A local-gateway failure for one site must not tear down the integration.
     try:
         api = await _async_resolve_energy_site_api(
-            hass, entry, subentry_id, cloud_energy_site
+            hass, entry, subentry_id, cloud_energy_site, gateway_din
         )
     except _LOCAL_CONTROL_ERRORS:
         LOGGER.warning(
@@ -467,11 +470,53 @@ def _gateway_issue_id(site_id: int) -> str:
     return f"{ISSUE_GATEWAY_NOT_FOUND}_{site_id}"
 
 
+def _gateway_mismatch_issue_id(site_id: int) -> str:
+    """Return the repair issue id for a site whose address reaches another gateway."""
+    return f"{ISSUE_GATEWAY_MISMATCH}_{site_id}"
+
+
+@callback
+def _async_check_gateway_din(
+    hass: HomeAssistant,
+    subentry: ConfigSubentry,
+    client: PowerwallClient,
+    site_id: int,
+    expected_din: str | None,
+    din: str | None,
+) -> bool:
+    """Return whether the connected gateway is the site's own, raising a repair if not."""
+    if not expected_din or din is None:
+        return True
+    issue_id = _gateway_mismatch_issue_id(site_id)
+    if din == expected_din:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return True
+    LOGGER.warning(
+        "Local gateway at %s for energy site %s reports DIN %s instead of %s; "
+        "commands will fall back to cloud control",
+        client.host,
+        site_id,
+        din,
+        expected_din,
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_GATEWAY_MISMATCH,
+        translation_placeholders={"site": subentry.title, "host": client.host},
+    )
+    return False
+
+
 async def _async_resolve_energy_site_api(
     hass: HomeAssistant,
     entry: TeslemetryConfigEntry,
     subentry_id: str,
     cloud_energy_site: TeslemetryEnergySite,
+    gateway_din: str | None,
 ) -> EnergySite | EnergySiteRouter:
     """Return the API an energy site's platforms should call."""
     subentry = entry.subentries[subentry_id]
@@ -502,8 +547,27 @@ async def _async_resolve_energy_site_api(
         ir.async_delete_issue(
             hass, DOMAIN, _gateway_issue_id(cloud_energy_site.energy_site_id)
         )
+    site_id = cloud_energy_site.energy_site_id
+    if not _async_check_gateway_din(
+        hass, subentry, powerwall_client, site_id, gateway_din, powerwall_client.din
+    ):
+        return cloud_energy_site
+
+    async def _async_local_gateway_matches() -> bool:
+        """Check a gateway first connected by a command before sending it anything."""
+        try:
+            din = await powerwall_client.connect()
+        except PowerwallError:
+            # The command would fail to connect too, so go straight to the cloud.
+            return False
+        return _async_check_gateway_din(
+            hass, subentry, powerwall_client, site_id, gateway_din, din
+        )
+
     local_energy_site = PowerwallEnergySite(powerwall_client)
-    return EnergySiteRouter(local_energy_site, cloud_energy_site)
+    return EnergySiteRouter(
+        local_energy_site, cloud_energy_site, health=_async_local_gateway_matches
+    )
 
 
 async def _async_rediscover_gateway(
@@ -800,7 +864,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                 subentry_id,
                 energy_site_api,
             ) = await _async_resolve_local_control(
-                hass, entry, bool(battery), site_id, energy_site
+                hass,
+                entry,
+                bool(battery),
+                site_id,
+                energy_site,
+                product.get("gateway_id"),
             )
 
             if isinstance(energy_site_api, EnergySiteRouter):
