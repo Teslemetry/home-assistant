@@ -19,7 +19,7 @@ from homeassistant.components.cover import (
 )
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNKNOWN, Platform
 from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import async_get as async_get_restore_state
 
@@ -442,6 +442,63 @@ async def test_cover_command_errors(hass: HomeAssistant, response: dict) -> None
             {ATTR_ENTITY_ID: ["cover.test_windows"]},
             blocking=True,
         )
+
+
+@pytest.mark.parametrize("service", [SERVICE_OPEN_COVER, SERVICE_CLOSE_COVER])
+async def test_cover_rear_trunk_unknown_polling(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    mock_legacy: AsyncMock,
+    service: str,
+) -> None:
+    """Tests that a polled rear trunk in unknown state refuses to toggle."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_NONE
+    await setup_platform(hass, [Platform.COVER])
+    assert hass.states.get("cover.test_trunk").state == STATE_UNKNOWN
+
+    with (
+        patch(
+            "tesla_fleet_api.teslemetry.Vehicle.actuate_trunk",
+            return_value=COMMAND_OK,
+        ) as call,
+        pytest.raises(ServiceValidationError) as error,
+    ):
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: ["cover.test_trunk"]},
+            blocking=True,
+        )
+    assert error.value.translation_key == "rear_trunk_state_unknown"
+    call.assert_not_called()
+
+
+@pytest.mark.parametrize("service", [SERVICE_OPEN_COVER, SERVICE_CLOSE_COVER])
+async def test_cover_rear_trunk_unknown_streaming(
+    hass: HomeAssistant,
+    service: str,
+) -> None:
+    """Tests that a streamed rear trunk with no TrunkRear value refuses to toggle."""
+
+    await setup_platform(hass, [Platform.COVER])
+    assert hass.states.get("cover.test_trunk").state == STATE_UNKNOWN
+
+    with (
+        patch(
+            "tesla_fleet_api.teslemetry.Vehicle.actuate_trunk",
+            return_value=COMMAND_OK,
+        ) as call,
+        pytest.raises(ServiceValidationError) as error,
+    ):
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: ["cover.test_trunk"]},
+            blocking=True,
+        )
+    assert error.value.translation_key == "rear_trunk_state_unknown"
+    call.assert_not_called()
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default", "mock_legacy")

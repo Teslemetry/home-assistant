@@ -23,10 +23,12 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
 from . import TeslemetryConfigEntry
+from .const import DOMAIN
 from .entity import (
     TeslemetryRootEntity,
     TeslemetryVehiclePollingEntity,
@@ -447,10 +449,19 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
     _attr_device_class = CoverDeviceClass.DOOR
     _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE
 
+    def _raise_if_state_unknown(self) -> None:
+        """Refuse to toggle the trunk when its position is unknown."""
+        if self.is_closed is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="rear_trunk_state_unknown",
+            )
+
     @override
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open rear trunk."""
-        if self.is_closed is not False:
+        self._raise_if_state_unknown()
+        if self.is_closed:
             self.raise_for_scope(Scope.VEHICLE_CMDS)
 
             await handle_vehicle_command(self.api.actuate_trunk(Trunk.REAR))
@@ -460,7 +471,8 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
     @override
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close rear trunk."""
-        if self.is_closed is not True:
+        self._raise_if_state_unknown()
+        if not self.is_closed:
             self.raise_for_scope(Scope.VEHICLE_CMDS)
 
             await handle_vehicle_command(self.api.actuate_trunk(Trunk.REAR))
