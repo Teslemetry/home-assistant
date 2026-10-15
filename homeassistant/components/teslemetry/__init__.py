@@ -479,6 +479,7 @@ def _gateway_mismatch_issue_id(site_id: int) -> str:
 @callback
 def _async_check_gateway_din(
     hass: HomeAssistant,
+    entry: TeslemetryConfigEntry,
     subentry: ConfigSubentry,
     client: PowerwallClient,
     site_id: int,
@@ -515,6 +516,7 @@ def _async_check_gateway_din(
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_GATEWAY_MISMATCH,
         translation_placeholders={"site": subentry.title, "host": client.host},
+        config_entry_id=entry.entry_id,
     )
     return False
 
@@ -557,7 +559,13 @@ async def _async_resolve_energy_site_api(
         )
     site_id = cloud_energy_site.energy_site_id
     if not _async_check_gateway_din(
-        hass, subentry, powerwall_client, site_id, gateway_din, powerwall_client.din
+        hass,
+        entry,
+        subentry,
+        powerwall_client,
+        site_id,
+        gateway_din,
+        powerwall_client.din,
     ):
         return cloud_energy_site
 
@@ -569,7 +577,7 @@ async def _async_resolve_energy_site_api(
             # The command would fail to connect too, so go straight to the cloud.
             return False
         return _async_check_gateway_din(
-            hass, subentry, powerwall_client, site_id, gateway_din, din
+            hass, entry, subentry, powerwall_client, site_id, gateway_din, din
         )
 
     local_energy_site = PowerwallEnergySite(powerwall_client)
