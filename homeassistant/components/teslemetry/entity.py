@@ -20,6 +20,8 @@ from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
+    TeslemetryLocalConfigCoordinator,
+    TeslemetryLocalStatusCoordinator,
     TeslemetryVehicleDataCoordinator,
 )
 from .models import TeslemetryEnergyData, TeslemetryVehicleData
@@ -197,6 +199,48 @@ class TeslemetryEnergyHistoryEntity(TeslemetryPollingEntity):
     @override
     async def async_update(self) -> None:
         """Keep the streamed totals; the stream is their only source."""
+
+
+class TeslemetryEnergyLocalStatusEntity(
+    TeslemetryRootEntity, CoordinatorEntity[TeslemetryLocalStatusCoordinator]
+):
+    """Parent class for Teslemetry entities read from the local Powerwall status."""
+
+    def __init__(
+        self,
+        data: TeslemetryEnergyData,
+        key: str,
+    ) -> None:
+        """Initialize common aspects of a Teslemetry local status entity."""
+
+        assert data.local_status_coordinator
+
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{data.id}-{key}"
+        self._attr_device_info = data.device
+
+        super().__init__(data.local_status_coordinator)
+
+
+class TeslemetryEnergyLocalConfigEntity(
+    TeslemetryRootEntity, CoordinatorEntity[TeslemetryLocalConfigCoordinator]
+):
+    """Parent class for Teslemetry entities read from the local Powerwall config."""
+
+    def __init__(
+        self,
+        data: TeslemetryEnergyData,
+        key: str,
+    ) -> None:
+        """Initialize common aspects of a Teslemetry local config entity."""
+
+        assert data.local_config_coordinator
+
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{data.id}-{key}"
+        self._attr_device_info = data.device
+
+        super().__init__(data.local_config_coordinator)
 
 
 class TeslemetryWallConnectorEntity(TeslemetryPollingEntity):
