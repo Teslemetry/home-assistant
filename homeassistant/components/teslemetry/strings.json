@@ -203,6 +203,9 @@
       "components_grid_services_enabled": {
         "name": "Grid services enabled"
       },
+      "contactor_closed": {
+        "name": "Contactor closed"
+      },
       "dc_dc_enable": {
         "name": "DC to DC converter"
       },
@@ -221,6 +224,9 @@
       "emergency_lane_departure_avoidance": {
         "name": "Emergency lane departure avoidance"
       },
+      "escan_firmware_updating": {
+        "name": "ESCAN firmware updating"
+      },
       "europe_vehicle": {
         "name": "European vehicle"
       },
@@ -229,6 +235,9 @@
       },
       "gps_state": {
         "name": "GPS state"
+      },
+      "grid_ok": {
+        "name": "Grid OK"
       },
       "grid_services_active": {
         "name": "Grid services active"
@@ -263,11 +272,17 @@
       "located_at_work": {
         "name": "Located at work"
       },
+      "microgrid_ok": {
+        "name": "Microgrid OK"
+      },
       "offroad_lightbar_present": {
         "name": "Offroad lightbar"
       },
       "pin_to_drive_enabled": {
         "name": "PIN to Drive enabled"
+      },
+      "pw3can_firmware_updating": {
+        "name": "PW3CAN firmware updating"
       },
       "rear_display_hvac_enabled": {
         "name": "Rear display HVAC"
@@ -283,6 +298,12 @@
       },
       "service_mode": {
         "name": "Service mode"
+      },
+      "site_manager_running": {
+        "name": "Site manager running"
+      },
+      "site_running": {
+        "name": "Site running"
       },
       "speed_limit_mode": {
         "name": "Speed limited"
@@ -972,6 +993,24 @@
       "hvac_right_temperature_request": {
         "name": "Right temperature request"
       },
+      "island_freq_l1_load": {
+        "name": "Island frequency L1 load"
+      },
+      "island_freq_l1_main": {
+        "name": "Island frequency L1 main"
+      },
+      "island_freq_l2_load": {
+        "name": "Island frequency L2 load"
+      },
+      "island_freq_l2_main": {
+        "name": "Island frequency L2 main"
+      },
+      "island_freq_l3_load": {
+        "name": "Island frequency L3 load"
+      },
+      "island_freq_l3_main": {
+        "name": "Island frequency L3 main"
+      },
       "island_status": {
         "name": "Island status",
         "state": {
@@ -981,6 +1020,24 @@
           "off_grid_unintentional": "Off-grid unintentional",
           "on_grid": "On-grid"
         }
+      },
+      "island_voltage_l1n_load": {
+        "name": "Island voltage L1-N load"
+      },
+      "island_voltage_l1n_main": {
+        "name": "Island voltage L1-N main"
+      },
+      "island_voltage_l2n_load": {
+        "name": "Island voltage L2-N load"
+      },
+      "island_voltage_l2n_main": {
+        "name": "Island voltage L2-N main"
+      },
+      "island_voltage_l3n_load": {
+        "name": "Island voltage L3-N load"
+      },
+      "island_voltage_l3n_main": {
+        "name": "Island voltage L3-N main"
       },
       "isolation_resistance": {
         "name": "Isolation resistance"
@@ -1262,6 +1319,9 @@
     },
     "command_reason": {
       "message": "Command was rejected: {reason}"
+    },
+    "local_update_failed": {
+      "message": "Error fetching data from the local Powerwall gateway: {message}"
     },
     "missing_scope": {
       "message": "Missing required scope: {scope}"
