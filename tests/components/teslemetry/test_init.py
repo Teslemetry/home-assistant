@@ -2029,6 +2029,7 @@ async def test_local_gateway_din_mismatch_raises_repair(
     assert issue.translation_key == "gateway_mismatch"
     assert issue.translation_placeholders == {"site": "Energy Site", "host": HOST}
     assert not issue.is_fixable
+    assert issue.config_entry_id == entry.entry_id
 
 
 async def test_local_gateway_din_mismatch_repair_cleared_after_match(
