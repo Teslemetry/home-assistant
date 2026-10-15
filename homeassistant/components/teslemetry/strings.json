@@ -203,6 +203,9 @@
       "components_grid_services_enabled": {
         "name": "Grid services enabled"
       },
+      "contactor_closed": {
+        "name": "Contactor closed"
+      },
       "dc_dc_enable": {
         "name": "DC to DC converter"
       },
@@ -221,6 +224,9 @@
       "emergency_lane_departure_avoidance": {
         "name": "Emergency lane departure avoidance"
       },
+      "escan_firmware_updating": {
+        "name": "ESCAN firmware updating"
+      },
       "europe_vehicle": {
         "name": "European vehicle"
       },
@@ -229,6 +235,9 @@
       },
       "gps_state": {
         "name": "GPS state"
+      },
+      "grid_ok": {
+        "name": "Grid OK"
       },
       "grid_services_active": {
         "name": "Grid services active"
@@ -263,11 +272,17 @@
       "located_at_work": {
         "name": "Located at work"
       },
+      "microgrid_ok": {
+        "name": "Microgrid OK"
+      },
       "offroad_lightbar_present": {
         "name": "Offroad lightbar"
       },
       "pin_to_drive_enabled": {
         "name": "PIN to Drive enabled"
+      },
+      "pw3can_firmware_updating": {
+        "name": "PW3CAN firmware updating"
       },
       "rear_display_hvac_enabled": {
         "name": "Rear display HVAC"
@@ -283,6 +298,12 @@
       },
       "service_mode": {
         "name": "Service mode"
+      },
+      "site_manager_running": {
+        "name": "Site manager running"
+      },
+      "site_running": {
+        "name": "Site running"
       },
       "speed_limit_mode": {
         "name": "Speed limited"
@@ -1080,6 +1101,42 @@
           "none": "None"
         }
       },
+      "pv_string_a_current": {
+        "name": "PV string A current"
+      },
+      "pv_string_a_voltage": {
+        "name": "PV string A voltage"
+      },
+      "pv_string_b_current": {
+        "name": "PV string B current"
+      },
+      "pv_string_b_voltage": {
+        "name": "PV string B voltage"
+      },
+      "pv_string_c_current": {
+        "name": "PV string C current"
+      },
+      "pv_string_c_voltage": {
+        "name": "PV string C voltage"
+      },
+      "pv_string_d_current": {
+        "name": "PV string D current"
+      },
+      "pv_string_d_voltage": {
+        "name": "PV string D voltage"
+      },
+      "pv_string_e_current": {
+        "name": "PV string E current"
+      },
+      "pv_string_e_voltage": {
+        "name": "PV string E voltage"
+      },
+      "pv_string_f_current": {
+        "name": "PV string F current"
+      },
+      "pv_string_f_voltage": {
+        "name": "PV string F voltage"
+      },
       "rated_range": {
         "name": "Rated range"
       },
@@ -1262,6 +1319,9 @@
     },
     "command_reason": {
       "message": "Command was rejected: {reason}"
+    },
+    "local_update_failed": {
+      "message": "Error fetching data from the local Powerwall gateway: {message}"
     },
     "missing_scope": {
       "message": "Missing required scope: {scope}"

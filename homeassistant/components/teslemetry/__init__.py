@@ -82,6 +82,8 @@ from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
+    TeslemetryLocalComponentsCoordinator,
+    TeslemetryLocalStatusCoordinator,
     TeslemetryMetadataCoordinator,
     TeslemetryVehicleDataCoordinator,
 )
@@ -792,6 +794,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                 hass, entry, bool(battery), site_id, energy_site
             )
 
+            local_status_coordinator = (
+                TeslemetryLocalStatusCoordinator(
+                    hass, entry, energy_site_api.primary.powerwall, site_id
+                )
+                if isinstance(energy_site_api, EnergySiteRouter)
+                else None
+            )
+            local_components_coordinator = (
+                TeslemetryLocalComponentsCoordinator(
+                    hass, entry, energy_site_api.primary.powerwall, site_id
+                )
+                if isinstance(energy_site_api, EnergySiteRouter)
+                else None
+            )
+
             energysites.append(
                 TeslemetryEnergyData(
                     api=energy_site_api,
@@ -802,6 +819,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
                     device=device,
                     can_local_control=can_local_control,
                     subentry_id=subentry_id,
+                    local_status_coordinator=local_status_coordinator,
+                    local_components_coordinator=local_components_coordinator,
                 )
             )
 
@@ -1023,6 +1042,11 @@ async def _async_setup_energy_site(
 async def _async_refresh_energy_site(energysite: TeslemetryEnergyData) -> None:
     """Cold read the site info, then resolve the site timezone it carries."""
     await energysite.info_coordinator.async_config_entry_first_refresh()
+    if energysite.local_status_coordinator is not None:
+        # A local gateway failure must not block the cloud entities.
+        await energysite.local_status_coordinator.async_refresh()
+    if energysite.local_components_coordinator is not None:
+        await energysite.local_components_coordinator.async_refresh()
     if energysite.history_coordinator is not None:
         await energysite.history_coordinator.async_set_time_zone(
             energysite.info_coordinator.data.get("installation_time_zone")

@@ -1,22 +1,51 @@
 """Test the Teslemetry binary sensor platform."""
 
+from copy import deepcopy
+from typing import Any
 from unittest.mock import AsyncMock
 
+from aiopowerwall import PowerwallConnectionError
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from syrupy.assertion import SnapshotAssertion
 from teslemetry_stream import Signal
 
 from homeassistant.components.teslemetry.const import DOMAIN
-from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, Platform
+from homeassistant.components.teslemetry.coordinator import (
+    LOCAL_STATUS_INTERVAL,
+    VEHICLE_INTERVAL,
+)
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import (
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    Platform,
+)
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
-from . import assert_entities, assert_entities_alt, setup_platform
-from .const import METADATA, VEHICLE_DATA_ALT
+from . import (
+    SITE_ID,
+    assert_entities,
+    assert_entities_alt,
+    setup_paired_platform,
+    setup_platform,
+)
+from .const import METADATA, POWERWALL_STATUS, VEHICLE_DATA_ALT
 
 from tests.common import async_fire_time_changed, mock_restore_cache
+
+LOCAL_STATUS_KEYS = (
+    "contactor_closed",
+    "escan_firmware_updating",
+    "grid_ok",
+    "microgrid_ok",
+    "pw3can_firmware_updating",
+    "site_manager_running",
+    "site_running",
+)
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -195,3 +224,149 @@ async def test_gps_state_requires_location_scope(
         )
         is not None
     ) is expected
+
+
+def _local_entity_ids(entity_registry: er.EntityRegistry) -> dict[str, str]:
+    """Return the entity ids of the local status binary sensors by key."""
+    return {
+        key: entity_id
+        for key in LOCAL_STATUS_KEYS
+        if (
+            entity_id := entity_registry.async_get_entity_id(
+                Platform.BINARY_SENSOR, DOMAIN, f"{SITE_ID}-{key}"
+            )
+        )
+    }
+
+
+def _without(*path: str) -> dict[str, Any]:
+    """Return the gateway status without the key at a path."""
+    data = deepcopy(POWERWALL_STATUS)
+    parent = data
+    for key in path[:-1]:
+        parent = parent[key]
+    del parent[path[-1]]
+    return data
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_local_binary_sensors(
+    hass: HomeAssistant,
+    snapshot: SnapshotAssertion,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Test a paired energy site creates the local status binary sensors."""
+    await setup_paired_platform(hass, [Platform.BINARY_SENSOR])
+
+    entity_ids = _local_entity_ids(entity_registry)
+    assert entity_ids.keys() == set(LOCAL_STATUS_KEYS)
+    for entity_id in entity_ids.values():
+        assert entity_registry.async_get(entity_id) == snapshot(
+            name=f"{entity_id}-entry"
+        )
+        assert hass.states.get(entity_id) == snapshot(name=f"{entity_id}-state")
+
+
+async def test_local_binary_sensors_unpaired(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+) -> None:
+    """Test an energy site without local pairing creates no local sensors."""
+    await setup_platform(hass, [Platform.BINARY_SENSOR])
+
+    mock_powerwall_status.assert_not_called()
+    assert not _local_entity_ids(entity_registry)
+
+
+@pytest.mark.parametrize(
+    ("status", "missing"),
+    [
+        pytest.param(_without("pw3Can"), "pw3can_firmware_updating", id="pw3can"),
+        pytest.param(
+            _without("control", "siteShutdown", "isShutDown"),
+            "site_running",
+            id="site_shutdown",
+        ),
+    ],
+)
+async def test_local_binary_sensors_missing_signal(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    status: dict[str, Any],
+    missing: str,
+) -> None:
+    """Test a signal absent from the first refresh skips its sensor."""
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = status
+
+    await setup_paired_platform(hass, [Platform.BINARY_SENSOR])
+
+    assert _local_entity_ids(entity_registry).keys() == set(LOCAL_STATUS_KEYS) - {
+        missing
+    }
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_local_binary_sensors_first_refresh_failure(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test sensors from a failed first local refresh recover without a reload."""
+    mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
+
+    entry = await setup_paired_platform(hass, [Platform.BINARY_SENSOR])
+
+    assert entry.state is ConfigEntryState.LOADED
+    entity_ids = _local_entity_ids(entity_registry)
+    assert entity_ids.keys() == set(LOCAL_STATUS_KEYS)
+    for entity_id in entity_ids.values():
+        assert (state := hass.states.get(entity_id))
+        assert state.state == STATE_UNAVAILABLE
+
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = POWERWALL_STATUS
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    for entity_id in entity_ids.values():
+        assert (state := hass.states.get(entity_id))
+        assert state.state != STATE_UNAVAILABLE
+    assert (state := hass.states.get(entity_ids["grid_ok"]))
+    assert state.state == STATE_ON
+
+
+async def test_local_binary_sensors_poll_failure(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a failed local poll makes the sensors unavailable until it recovers."""
+    await setup_paired_platform(hass, [Platform.BINARY_SENSOR])
+    entity_id = _local_entity_ids(entity_registry)["grid_ok"]
+    assert (state := hass.states.get(entity_id))
+    assert state.state == STATE_ON
+
+    mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert (state := hass.states.get(entity_id))
+    assert state.state == STATE_UNAVAILABLE
+
+    status = deepcopy(POWERWALL_STATUS)
+    status["control"]["islanding"]["gridOK"] = False
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = status
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert (state := hass.states.get(entity_id))
+    assert state.state == STATE_OFF
