@@ -2271,14 +2271,19 @@ async def test_energy_live_stream_timeout_marks_unavailable_and_recovers(
     """A connected stream without live_status fails the live coordinator."""
     await setup_platform(hass, [Platform.SENSOR])
 
-    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT - timedelta(seconds=1))
+    await _tick(
+        hass,
+        freezer,
+        ENERGY_LIVE_STREAM_TIMEOUT - timedelta(seconds=1),
+        wait_background_tasks=True,
+    )
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
 
-    await _tick(hass, freezer, timedelta(seconds=1))
+    await _tick(hass, freezer, timedelta(seconds=1), wait_background_tasks=True)
     assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
 
     # Continued silence does not log again.
-    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT)
+    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT, wait_background_tasks=True)
     assert [
         record.levelno
         for record in caplog.records
@@ -2292,20 +2297,24 @@ async def test_energy_live_stream_timeout_marks_unavailable_and_recovers(
     assert hass.states.get("sensor.energy_site_solar_power").state == "0.456"
 
     # The document restarted the timeout.
-    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT - timedelta(seconds=1))
+    await _tick(
+        hass,
+        freezer,
+        ENERGY_LIVE_STREAM_TIMEOUT - timedelta(seconds=1),
+        wait_background_tasks=True,
+    )
     assert hass.states.get("sensor.energy_site_solar_power").state == "0.456"
 
 
-async def test_energy_live_stream_timeout_waits_for_reconnect(
+async def test_energy_live_stream_timeout_keeps_disconnect_error(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
     freezer: FrozenDateTimeFactory,
     mock_add_connection_listener: MagicMock,
     mock_energy_live_stream: MagicMock,
 ) -> None:
-    """A dropped stream keeps its disconnect error until it reconnects."""
-    entry = await setup_platform(hass, [Platform.SENSOR])
-    live_coordinator = entry.runtime_data.energysites[0].live_coordinator
+    """A dropped stream reports its disconnect, not a live_status timeout."""
+    await setup_platform(hass, [Platform.SENSOR])
 
     with patch(
         "teslemetry_stream.TeslemetryStream.connected",
@@ -2313,21 +2322,43 @@ async def test_energy_live_stream_timeout_waits_for_reconnect(
         return_value=False,
     ):
         mock_add_connection_listener.send(False)
-        await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT)
+        await _tick(
+            hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT, wait_background_tasks=True
+        )
 
     assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
     assert "Disconnected from the Teslemetry stream" in caplog.text
     assert LIVE_STATUS_TIMEOUT_MESSAGE not in caplog.text
 
-    # Reconnected, but still no live_status.
     mock_add_connection_listener.send(True)
-    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT)
-    assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
-    assert live_coordinator.last_exception.translation_key == "live_status_timeout"
-
     mock_energy_live_stream.send(deepcopy(LIVE_STATUS["response"]))
     await hass.async_block_till_done()
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+
+
+async def test_energy_live_stream_timeout_rechecks_after_reconnect(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A timeout during a drop waits for the reconnected stream to stay silent."""
+    await setup_platform(hass, [Platform.SENSOR])
+
+    with patch(
+        "teslemetry_stream.TeslemetryStream.connected",
+        new_callable=PropertyMock,
+        return_value=False,
+    ):
+        await _tick(
+            hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT, wait_background_tasks=True
+        )
+
+    assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    assert LIVE_STATUS_TIMEOUT_MESSAGE not in caplog.text
+
+    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT, wait_background_tasks=True)
+    assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
+    assert LIVE_STATUS_TIMEOUT_MESSAGE in caplog.text
 
 
 async def test_vehicle_stream_timeout_raises_repair_issue(
@@ -2341,10 +2372,15 @@ async def test_vehicle_stream_timeout_raises_repair_issue(
     freezer.move_to("2026-10-21T01:00:00+00:00")
     entry = await setup_platform(hass, [Platform.BINARY_SENSOR])
 
-    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT - timedelta(seconds=1))
+    await _tick(
+        hass,
+        freezer,
+        VEHICLE_STREAM_TIMEOUT - timedelta(seconds=1),
+        wait_background_tasks=True,
+    )
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
 
-    await _tick(hass, freezer, timedelta(seconds=1))
+    await _tick(hass, freezer, timedelta(seconds=1), wait_background_tasks=True)
     issue = issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID)
     assert issue is not None
     assert issue.translation_key == "vehicle_stream_timeout"
@@ -2361,7 +2397,7 @@ async def test_vehicle_stream_timeout_raises_repair_issue(
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
 
     # Unloading clears a raised issue.
-    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT)
+    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is not None
     await hass.config_entries.async_unload(entry.entry_id)
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
@@ -2380,7 +2416,7 @@ async def test_vehicle_stream_timeout_ignores_disconnected_stream(
         new_callable=PropertyMock,
         return_value=False,
     ):
-        await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT)
+        await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
 
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
 
@@ -2395,7 +2431,7 @@ async def test_stream_timeouts_cancelled_on_unload(
     entry = await setup_platform(hass, [Platform.SENSOR])
 
     await hass.config_entries.async_unload(entry.entry_id)
-    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT)
+    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
 
     assert LIVE_STATUS_TIMEOUT_MESSAGE not in caplog.text
     assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
@@ -3225,12 +3261,16 @@ async def _setup_energy_site_entry(
 
 
 async def _tick(
-    hass: HomeAssistant, freezer: FrozenDateTimeFactory, interval: timedelta
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    interval: timedelta,
+    *,
+    wait_background_tasks: bool = False,
 ) -> None:
     """Advance time by one interval and let the timers run."""
     freezer.tick(interval)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=wait_background_tasks)
 
 
 async def _tick_local_live(

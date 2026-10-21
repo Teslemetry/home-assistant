@@ -1180,14 +1180,8 @@ async def async_setup_stream(
             create_vehicle_streaming_listener(hass, vehicle.vin, entry.entry_id)
         )
     )
-    _async_track_vehicle_stream_timeout(hass, entry, vehicle)
 
-
-@callback
-def _async_track_vehicle_stream_timeout(
-    hass: HomeAssistant, entry: TeslemetryConfigEntry, vehicle: TeslemetryVehicleData
-) -> None:
-    """Raise a repair issue while a connected stream carries nothing for a vehicle."""
+    # A connected stream can go silent for one vehicle during a Tesla-side outage.
     issue_id = f"vehicle_stream_timeout_{vehicle.vin}"
     name = vehicle.device.get("name") or vehicle.vin
     last_event = dt_util.utcnow()
