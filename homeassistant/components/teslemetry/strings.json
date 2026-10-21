@@ -1348,6 +1348,9 @@
     "local_update_failed": {
       "message": "Error fetching data from the local Powerwall gateway: {message}"
     },
+    "live_status_timeout": {
+      "message": "No live status received from the Teslemetry stream for energy site {site_id} in {minutes} minutes"
+    },
     "missing_scope": {
       "message": "Missing required scope: {scope}"
     },
@@ -1451,6 +1454,10 @@
         }
       },
       "title": "Enable data streaming for {vehicle}"
+    },
+    "vehicle_stream_timeout": {
+      "description": "Home Assistant has not received any streaming data from {vehicle} since {since}, although the Teslemetry stream is connected. Its entities keep showing the values from that time.\n\nThis can happen when the vehicle has no cellular or Wi-Fi connection, when another app has replaced its streaming configuration, or during a Tesla outage. Check the vehicle in the Teslemetry console. This warning clears when data arrives again.",
+      "title": "No data from {vehicle}"
     }
   },
   "preview_features": {
