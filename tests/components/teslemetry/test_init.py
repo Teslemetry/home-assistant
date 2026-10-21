@@ -75,6 +75,7 @@ from homeassistant.components.teslemetry.const import (
     CONF_SITE_ID,
     CONF_VIN,
     DOMAIN,
+    STREAM_DISCONNECT_GRACE,
     SUBENTRY_TYPE_ENERGY_SITE,
     SUBENTRY_TYPE_VEHICLE,
 )
@@ -2214,6 +2215,7 @@ async def test_energy_stream_stop_does_not_fail_coordinators(
 
 async def test_energy_stream_disconnect_marks_unavailable_and_recovers(
     hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
     mock_add_connection_listener: MagicMock,
     mock_energy_live_stream: MagicMock,
     mock_energy_info_stream: MagicMock,
@@ -2225,9 +2227,10 @@ async def test_energy_stream_disconnect_marks_unavailable_and_recovers(
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
     assert hass.states.get("calendar.energy_site_buy_tariff").state != STATE_UNAVAILABLE
 
-    # A stream disconnect fails the live and info/tariff coordinators.
+    # A stream that stays down past the grace fails the live and info/tariff
+    # coordinators.
     mock_add_connection_listener.send(False)
-    await hass.async_block_till_done()
+    await _tick(hass, freezer, STREAM_GRACE)
 
     assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
     assert hass.states.get("calendar.energy_site_buy_tariff").state == STATE_UNAVAILABLE
@@ -2254,6 +2257,71 @@ async def test_energy_stream_disconnect_marks_unavailable_and_recovers(
         for flow in hass.config_entries.flow.async_progress()
         if flow["handler"] == DOMAIN
     ]
+
+
+async def test_energy_stream_quick_reconnect_stays_available(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    freezer: FrozenDateTimeFactory,
+    mock_add_connection_listener: MagicMock,
+) -> None:
+    """A drop that reconnects within the grace keeps energy entities available."""
+    await setup_platform(hass, [Platform.SENSOR, Platform.CALENDAR])
+
+    mock_add_connection_listener.send(False)
+    await _tick(hass, freezer, STREAM_GRACE - timedelta(seconds=1))
+    assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    assert hass.states.get("calendar.energy_site_buy_tariff").state != STATE_UNAVAILABLE
+
+    mock_add_connection_listener.send(True)
+    # The reconnect cancelled the grace timer, so passing its deadline fails nothing.
+    await _tick(hass, freezer, STREAM_GRACE)
+
+    assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    assert hass.states.get("calendar.energy_site_buy_tariff").state != STATE_UNAVAILABLE
+    assert "Disconnected from the Teslemetry stream" not in caplog.text
+
+
+async def test_energy_stream_failed_reconnects_mark_unavailable(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    freezer: FrozenDateTimeFactory,
+    mock_add_connection_listener: MagicMock,
+) -> None:
+    """Reconnects that keep failing past the grace fail the energy coordinators."""
+    await setup_platform(hass, [Platform.SENSOR, Platform.CALENDAR])
+
+    mock_add_connection_listener.send(False)
+    await _tick(hass, freezer, STREAM_GRACE - timedelta(seconds=1))
+    # A failed reconnect attempt reports another disconnect; it must not
+    # restart the grace.
+    mock_add_connection_listener.send(False)
+    await _tick(hass, freezer, timedelta(seconds=1))
+
+    assert hass.states.get("sensor.energy_site_solar_power").state == STATE_UNAVAILABLE
+    assert hass.states.get("calendar.energy_site_buy_tariff").state == STATE_UNAVAILABLE
+    assert [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "Disconnected from the Teslemetry stream" in record.getMessage()
+    ]
+
+
+async def test_energy_stream_grace_cancelled_on_unload(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+    freezer: FrozenDateTimeFactory,
+    mock_add_connection_listener: MagicMock,
+) -> None:
+    """Unloading during the grace cancels the pending coordinator failure."""
+    entry = await setup_platform(hass, [Platform.SENSOR, Platform.CALENDAR])
+
+    mock_add_connection_listener.send(False)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await _tick(hass, freezer, STREAM_GRACE)
+
+    assert "Disconnected from the Teslemetry stream" not in caplog.text
 
 
 CLOUD_RESULT = {"response": {"result": True, "reason": "cloud"}}
@@ -3077,6 +3145,9 @@ async def _setup_energy_site_entry(
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+
+
+STREAM_GRACE = timedelta(seconds=STREAM_DISCONNECT_GRACE)
 
 
 async def _tick(
@@ -3930,6 +4001,7 @@ async def test_overlapping_local_live_poll_skips_second_tick(
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_paired_stream_push_restores_availability_after_disconnect(
     hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
     mock_add_connection_listener: MagicMock,
     mock_energy_live_stream: MagicMock,
 ) -> None:
@@ -3938,7 +4010,7 @@ async def test_paired_stream_push_restores_availability_after_disconnect(
     assert hass.states.get("sensor.energy_site_grid_services_power").state == "0.0"
 
     mock_add_connection_listener.send(False)
-    await hass.async_block_till_done()
+    await _tick(hass, freezer, STREAM_GRACE)
     assert (
         hass.states.get("sensor.energy_site_grid_services_power").state
         == STATE_UNAVAILABLE
@@ -3966,7 +4038,7 @@ async def test_local_config_poll_does_not_clear_stream_error(
     await _setup_energy_site_entry(hass, _entry_with_powerwall(), [Platform.SELECT])
 
     mock_add_connection_listener.send(False)
-    await hass.async_block_till_done()
+    await _tick(hass, freezer, STREAM_GRACE)
     assert (
         hass.states.get("select.energy_site_operation_mode").state == STATE_UNAVAILABLE
     )
