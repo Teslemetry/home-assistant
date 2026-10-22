@@ -77,7 +77,6 @@ from homeassistant.components.teslemetry.const import (
     DOMAIN,
     SUBENTRY_TYPE_ENERGY_SITE,
     SUBENTRY_TYPE_VEHICLE,
-    VEHICLE_STREAM_TIMEOUT,
 )
 
 # Coordinator constants
@@ -2259,7 +2258,6 @@ async def test_energy_stream_disconnect_marks_unavailable_and_recovers(
 
 
 LIVE_STATUS_TIMEOUT_MESSAGE = "No live status received from the Teslemetry stream"
-VEHICLE_STREAM_ISSUE_ID = f"vehicle_stream_timeout_{VIN}"
 
 
 async def test_energy_live_stream_timeout_marks_unavailable_and_recovers(
@@ -2361,80 +2359,18 @@ async def test_energy_live_stream_timeout_rechecks_after_reconnect(
     assert LIVE_STATUS_TIMEOUT_MESSAGE in caplog.text
 
 
-async def test_vehicle_stream_timeout_raises_repair_issue(
+async def test_energy_live_stream_timeout_cancelled_on_unload(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
     freezer: FrozenDateTimeFactory,
-    issue_registry: ir.IssueRegistry,
-    mock_add_listener: MagicMock,
 ) -> None:
-    """A streaming vehicle silent on a connected stream raises a repair issue."""
-    freezer.move_to("2026-10-21T01:00:00+00:00")
-    entry = await setup_platform(hass, [Platform.BINARY_SENSOR])
-
-    await _tick(
-        hass,
-        freezer,
-        VEHICLE_STREAM_TIMEOUT - timedelta(seconds=1),
-        wait_background_tasks=True,
-    )
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
-
-    await _tick(hass, freezer, timedelta(seconds=1), wait_background_tasks=True)
-    issue = issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID)
-    assert issue is not None
-    assert issue.translation_key == "vehicle_stream_timeout"
-    assert issue.translation_placeholders == {
-        "vehicle": "Test",
-        "since": "2026-10-20 18:00",
-    }
-    assert "No streaming data received from Test since 2026-10-20 18:00" in caplog.text
-    # The vehicle's entities stay available.
-    assert hass.states.get("binary_sensor.test_status").state != STATE_UNAVAILABLE
-
-    mock_add_listener.send({"vin": VIN, "state": "online"})
-    await hass.async_block_till_done()
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
-
-    # Unloading clears a raised issue.
-    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is not None
-    await hass.config_entries.async_unload(entry.entry_id)
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
-
-
-async def test_vehicle_stream_timeout_ignores_disconnected_stream(
-    hass: HomeAssistant,
-    freezer: FrozenDateTimeFactory,
-    issue_registry: ir.IssueRegistry,
-) -> None:
-    """A dropped stream does not raise the vehicle repair issue."""
-    await setup_platform(hass, [Platform.BINARY_SENSOR])
-
-    with patch(
-        "teslemetry_stream.TeslemetryStream.connected",
-        new_callable=PropertyMock,
-        return_value=False,
-    ):
-        await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
-
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
-
-
-async def test_stream_timeouts_cancelled_on_unload(
-    hass: HomeAssistant,
-    caplog: pytest.LogCaptureFixture,
-    freezer: FrozenDateTimeFactory,
-    issue_registry: ir.IssueRegistry,
-) -> None:
-    """Unloading cancels the pending energy and vehicle stream timeouts."""
+    """Unloading cancels the pending energy live stream timeout."""
     entry = await setup_platform(hass, [Platform.SENSOR])
 
     await hass.config_entries.async_unload(entry.entry_id)
-    await _tick(hass, freezer, VEHICLE_STREAM_TIMEOUT, wait_background_tasks=True)
+    await _tick(hass, freezer, ENERGY_LIVE_STREAM_TIMEOUT, wait_background_tasks=True)
 
     assert LIVE_STATUS_TIMEOUT_MESSAGE not in caplog.text
-    assert issue_registry.async_get_issue(DOMAIN, VEHICLE_STREAM_ISSUE_ID) is None
 
 
 CLOUD_RESULT = {"response": {"result": True, "reason": "cloud"}}

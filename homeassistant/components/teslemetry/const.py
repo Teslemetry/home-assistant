@@ -1,6 +1,5 @@
 """Constants used by Teslemetry integration."""
 
-from datetime import timedelta
 from enum import StrEnum
 import logging
 
@@ -20,8 +19,6 @@ BLE_PARENT_KEY = f"{DOMAIN}_ble_parent"
 BLE_PARENT_LOCK_KEY = f"{DOMAIN}_ble_parent_lock"
 BLE_DISCONNECT_TIMEOUT = 10
 BLE_ADVERTISEMENT_TIMEOUT = 5
-# Silence this long on a connected stream means the vehicle stopped reporting.
-VEHICLE_STREAM_TIMEOUT = timedelta(minutes=10)
 
 SUBENTRY_TYPE_ENERGY_SITE = "energy_site"
 CONF_SITE_ID = "site_id"
