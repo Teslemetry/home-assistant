@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
 from functools import partial
 from pathlib import Path
 import re
@@ -57,7 +56,7 @@ from homeassistant.const import (
     CONF_PASSWORD,
     Platform,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -76,10 +75,8 @@ from homeassistant.helpers.config_entry_oauth2_flow import (
     async_get_config_entry_implementation,
 )
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from homeassistant.util import dt as dt_util
 
 from .const import (
     BLE_DISCONNECT_TIMEOUT,
@@ -96,7 +93,6 @@ from .const import (
     SUBENTRY_TYPE_ENERGY_SITE,
     SUBENTRY_TYPE_VEHICLE,
     VEHICLE_ISSUE_LEARN_MORE,
-    VEHICLE_STREAM_TIMEOUT,
 )
 from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
@@ -1324,69 +1320,6 @@ async def async_setup_stream(
             create_vehicle_streaming_listener(hass, vehicle.vin, entry.entry_id)
         )
     )
-
-    # A connected stream can go silent for one vehicle during a Tesla-side outage.
-    issue_id = f"vehicle_stream_timeout_{vehicle.vin}"
-    name = vehicle.device.get("name") or vehicle.vin
-    last_event = dt_util.utcnow()
-    issue_raised = False
-    cancel_timer: CALLBACK_TYPE | None = None
-
-    @callback
-    def cancel() -> None:
-        nonlocal cancel_timer
-        if cancel_timer is not None:
-            cancel_timer()
-            cancel_timer = None
-
-    @callback
-    def restart() -> None:
-        nonlocal cancel_timer
-        cancel()
-        cancel_timer = async_call_later(hass, VEHICLE_STREAM_TIMEOUT, handle_timeout)
-
-    @callback
-    def handle_timeout(_now: datetime) -> None:
-        nonlocal cancel_timer, issue_raised
-        cancel_timer = None
-        # A dropped stream is not the vehicle's silence; check again later.
-        if not vehicle.stream.connected:
-            restart()
-            return
-        since = dt_util.as_local(last_event).strftime("%Y-%m-%d %H:%M")
-        LOGGER.warning("No streaming data received from %s since %s", name, since)
-        issue_raised = True
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=False,
-            is_persistent=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="vehicle_stream_timeout",
-            translation_placeholders={"vehicle": name, "since": since},
-        )
-
-    @callback
-    def handle_event(_event: dict[str, Any]) -> None:
-        nonlocal last_event, issue_raised
-        last_event = dt_util.utcnow()
-        if issue_raised:
-            issue_raised = False
-            LOGGER.info("Streaming data from %s resumed", name)
-            ir.async_delete_issue(hass, DOMAIN, issue_id)
-        restart()
-
-    @callback
-    def unload() -> None:
-        cancel()
-        ir.async_delete_issue(hass, DOMAIN, issue_id)
-
-    entry.async_on_unload(
-        vehicle.stream.async_add_listener(handle_event, {"vin": vehicle.vin})
-    )
-    entry.async_on_unload(unload)
-    restart()
 
 
 def create_vehicle_streaming_listener(
