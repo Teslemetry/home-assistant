@@ -1255,7 +1255,9 @@ async def test_insufficient_credits_backs_off_polling(
     assert coordinator.last_exception.retry_after == INSUFFICIENT_CREDITS_RETRY_AFTER
 
 
-async def _async_raise_credits_issue(hass: HomeAssistant) -> str:
+async def _async_raise_credits_issue(
+    hass: HomeAssistant, issue_registry: ir.IssueRegistry
+) -> str:
     """Set up the entry and send a command rejected for credits."""
     entry = await setup_platform(hass, [Platform.BUTTON])
     with (
@@ -1271,22 +1273,10 @@ async def _async_raise_credits_issue(hass: HomeAssistant) -> str:
             {ATTR_ENTITY_ID: ["button.test_flash_lights"]},
             blocking=True,
         )
+    assert issue_registry.async_get_issue(
+        DOMAIN, f"insufficient_credits_{entry.entry_id}"
+    )
     return entry.entry_id
-
-
-def _credits_charge(balance: int, quota_fraction_used: float) -> dict[str, object]:
-    """Return the credits a command charges, as the stream sends them."""
-    return {
-        "type": "command",
-        "cost": 1,
-        "accounting": {
-            "quota_fraction_used": quota_fraction_used,
-            "quota_credits_used": 1,
-            "balance_credits_used": 0,
-        },
-        "name": "flash_lights",
-        "balance": balance,
-    }
 
 
 @pytest.mark.parametrize(
@@ -1298,33 +1288,63 @@ def _credits_charge(balance: int, quota_fraction_used: float) -> dict[str, objec
             id="topup",
         ),
         pytest.param(
-            _credits_charge(0, 0.001)
-            | {
+            {
+                "type": "command",
+                "cost": 1,
+                "accounting": {
+                    "quota_fraction_used": 0.001,
+                    "quota_credits_used": 1,
+                    "balance_credits_used": 0,
+                },
+                "name": "flash_lights",
+                "balance": 0,
                 "quota": {
                     "used": 500,
                     "fraction": 0.5,
                     "reset_at": "2026-11-01T00:00:00.000Z",
                     "anchor_day": 1,
                     "lifetime": 5000,
-                }
+                },
             },
             True,
             id="quota_available",
         ),
-        pytest.param(_credits_charge(10, 0), False, id="low_balance"),
         pytest.param(
-            _credits_charge(0, 0.001)
-            | {
+            {
+                "type": "command",
+                "cost": 1,
+                "accounting": {
+                    "quota_fraction_used": 0,
+                    "quota_credits_used": 0,
+                    "balance_credits_used": 1,
+                },
+                "name": "flash_lights",
+                "balance": 25,
+            },
+            False,
+            id="balance_at_threshold",
+        ),
+        pytest.param(
+            {
+                "type": "command",
+                "cost": 1,
+                "accounting": {
+                    "quota_fraction_used": 0.001,
+                    "quota_credits_used": 1,
+                    "balance_credits_used": 0,
+                },
+                "name": "flash_lights",
+                "balance": 0,
                 "quota": {
-                    "used": 990,
-                    "fraction": 0.99,
+                    "used": 950,
+                    "fraction": 0.95,
                     "reset_at": "2026-11-01T00:00:00.000Z",
                     "anchor_day": 1,
                     "lifetime": 5000,
-                }
+                },
             },
             False,
-            id="quota_nearly_used",
+            id="quota_at_threshold",
         ),
     ],
 )
@@ -1336,7 +1356,7 @@ async def test_insufficient_credits_cleared_by_stream(
     cleared: bool,
 ) -> None:
     """Test a credits event deletes the repair only once credits are available."""
-    entry_id = await _async_raise_credits_issue(hass)
+    entry_id = await _async_raise_credits_issue(hass, issue_registry)
 
     mock_add_listener.send(
         {"credits": credits, "createdAt": "2026-10-24T00:00:00.000Z"}
@@ -1351,7 +1371,7 @@ async def test_insufficient_credits_kept_on_reload_deleted_on_remove(
     hass: HomeAssistant, issue_registry: ir.IssueRegistry
 ) -> None:
     """Test a reload keeps the repair, and removing the entry deletes it."""
-    entry_id = await _async_raise_credits_issue(hass)
+    entry_id = await _async_raise_credits_issue(hass, issue_registry)
     issue_id = f"insufficient_credits_{entry_id}"
 
     assert await hass.config_entries.async_reload(entry_id)

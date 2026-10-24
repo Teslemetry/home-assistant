@@ -133,6 +133,7 @@ async def handle_command(
             hass,
             DOMAIN,
             insufficient_credits_issue_id(entry),
+            config_entry_id=entry.entry_id,
             is_fixable=False,
             # Setup does not check credits, so nothing would raise it again
             # after a restart while the account is still short.

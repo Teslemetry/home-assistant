@@ -99,7 +99,6 @@ from .helpers import (
     async_update_device_sw_version,
     create_powerwall_client,
     flatten,
-    insufficient_credits_issue_id,
 )
 from .models import TeslemetryData, TeslemetryEnergyData, TeslemetryVehicleData
 from .services import async_setup_services
@@ -1121,12 +1120,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) 
                     vehicle.vin,
                     BLE_DISCONNECT_TIMEOUT,
                 )
-
-
-async def async_remove_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -> None:
-    """Remove Teslemetry Config."""
-    # Unload keeps the issue, as nothing raises it again after a reload.
-    ir.async_delete_issue(hass, DOMAIN, insufficient_credits_issue_id(entry))
 
 
 async def async_migrate_entry(

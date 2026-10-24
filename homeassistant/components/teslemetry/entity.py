@@ -222,6 +222,7 @@ class TeslemetryEnergyLocalStatusEntity(
 
         assert data.local_status_coordinator
 
+        self.config_entry = data.local_status_coordinator.config_entry
         self._attr_translation_key = key
         self._attr_unique_id = f"{data.id}-{key}"
         self._attr_device_info = data.device
