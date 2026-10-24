@@ -53,6 +53,7 @@ from tesla_protocol.command import vcsec_pb2
 from teslemetry_stream import TeslemetryStreamAuthenticationError
 
 from homeassistant.components.bluetooth import BluetoothReachabilityIntent
+from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN, SERVICE_PRESS
 from homeassistant.components.homeassistant import (
     DOMAIN as HOMEASSISTANT_DOMAIN,
     SERVICE_UPDATE_ENTITY,
@@ -116,6 +117,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
+    HomeAssistantError,
     OAuth2TokenRequestReauthError,
     OAuth2TokenRequestTransientError,
 )
@@ -1251,6 +1253,88 @@ async def test_insufficient_credits_backs_off_polling(
     coordinator = entry.runtime_data.vehicles[0].coordinator
     assert isinstance(coordinator.last_exception, UpdateFailed)
     assert coordinator.last_exception.retry_after == INSUFFICIENT_CREDITS_RETRY_AFTER
+
+
+async def _async_raise_credits_issue(hass: HomeAssistant) -> str:
+    """Set up the entry and send a command rejected for credits."""
+    entry = await setup_platform(hass, [Platform.BUTTON])
+    with (
+        patch(
+            "tesla_fleet_api.teslemetry.Vehicle.flash_lights",
+            side_effect=InsufficientCredits,
+        ),
+        pytest.raises(HomeAssistantError),
+    ):
+        await hass.services.async_call(
+            BUTTON_DOMAIN,
+            SERVICE_PRESS,
+            {ATTR_ENTITY_ID: ["button.test_flash_lights"]},
+            blocking=True,
+        )
+    return entry.entry_id
+
+
+@pytest.mark.parametrize(
+    ("balance", "quota", "cleared"),
+    [
+        pytest.param(1000, {}, True, id="balance"),
+        pytest.param(
+            0,
+            {"used": 100, "fraction": 0.5, "reset_at": "2026-11-01T00:00:00.000Z"},
+            True,
+            id="quota",
+        ),
+        pytest.param(10, {}, False, id="low_balance"),
+        pytest.param(
+            0,
+            {"used": 200, "fraction": 1.0, "reset_at": "2026-11-01T00:00:00.000Z"},
+            False,
+            id="quota_used",
+        ),
+    ],
+)
+async def test_insufficient_credits_cleared_by_stream(
+    hass: HomeAssistant,
+    issue_registry: ir.IssueRegistry,
+    mock_add_listener: AsyncMock,
+    balance: int,
+    quota: dict[str, Any],
+    cleared: bool,
+) -> None:
+    """Test a credits event deletes the repair only once credits are available."""
+    entry_id = await _async_raise_credits_issue(hass)
+
+    mock_add_listener.send(
+        {
+            "credits": {
+                "type": "topup",
+                "cost": -1000,
+                "name": "topup",
+                "balance": balance,
+                "quota": quota,
+            },
+            "createdAt": "2026-10-24T00:00:00.000Z",
+        }
+    )
+    await hass.async_block_till_done()
+
+    issue = issue_registry.async_get_issue(DOMAIN, f"insufficient_credits_{entry_id}")
+    assert (issue is None) is cleared
+
+
+async def test_insufficient_credits_kept_on_reload(
+    hass: HomeAssistant, issue_registry: ir.IssueRegistry
+) -> None:
+    """Test a reload keeps the repair, and removing the entry deletes it."""
+    entry_id = await _async_raise_credits_issue(hass)
+    issue_id = f"insufficient_credits_{entry_id}"
+
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+    assert issue_registry.async_get_issue(DOMAIN, issue_id)
+
+    assert await hass.config_entries.async_remove(entry_id)
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
 def _oauth_session(hass: HomeAssistant, entry: MockConfigEntry) -> OAuth2Session:

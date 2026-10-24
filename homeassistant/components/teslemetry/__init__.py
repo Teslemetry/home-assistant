@@ -95,9 +95,11 @@ from .coordinator import (
 )
 from .helpers import (
     async_get_ble_parent,
+    async_handle_credits,
     async_update_device_sw_version,
     create_powerwall_client,
     flatten,
+    insufficient_credits_issue_id,
 )
 from .models import TeslemetryData, TeslemetryEnergyData, TeslemetryVehicleData
 from .services import async_setup_services
@@ -924,6 +926,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
 
     if stream:
         entry.async_on_unload(stream.close)
+        entry.async_on_unload(
+            stream.listen_Credits(partial(async_handle_credits, hass, entry))
+        )
         # The stream is the only freshness signal for the energy coordinators, so
         # a dropped connection must mark their entities unavailable rather than
         # leaving stale live/info/tariff data available indefinitely.
@@ -1116,6 +1121,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) 
                     vehicle.vin,
                     BLE_DISCONNECT_TIMEOUT,
                 )
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -> None:
+    """Remove Teslemetry Config."""
+    # Unload keeps the issue, as nothing raises it again after a reload.
+    ir.async_delete_issue(hass, DOMAIN, insufficient_credits_issue_id(entry))
 
 
 async def async_migrate_entry(
