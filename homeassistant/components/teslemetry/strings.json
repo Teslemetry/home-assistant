@@ -1290,6 +1290,9 @@
     "command_reason": {
       "message": "Command was rejected: {reason}"
     },
+    "live_status_timeout": {
+      "message": "No live status received from the Teslemetry stream for energy site {site_id} in {minutes} minutes"
+    },
     "local_update_failed": {
       "message": "Error fetching data from the local Powerwall gateway: {message}"
     },
