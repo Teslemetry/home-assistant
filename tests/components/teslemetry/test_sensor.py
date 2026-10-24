@@ -1,11 +1,16 @@
 """Test the Teslemetry sensor platform."""
 
 from copy import deepcopy
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiopowerwall import PowerwallConnectionError
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from pytest_homeassistant.common import (
+    MockConfigEntry,
     async_capture_events,
     async_fire_time_changed,
     mock_restore_cache_with_extra_data,
@@ -18,11 +23,21 @@ from homeassistant.components.homeassistant import (
     DOMAIN as HOMEASSISTANT_DOMAIN,
     SERVICE_UPDATE_ENTITY,
 )
-from homeassistant.components.teslemetry.const import DOMAIN, ENERGY_HISTORY_FIELDS
-from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.components.teslemetry.const import (
+    CONF_SITE_ID,
+    DOMAIN,
+    ENERGY_HISTORY_FIELDS,
+    SUBENTRY_TYPE_ENERGY_SITE,
+)
+from homeassistant.components.teslemetry.coordinator import (
+    LOCAL_STATUS_INTERVAL,
+    VEHICLE_INTERVAL,
+)
+from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
 from homeassistant.const import (
     ATTR_ENTITY_ID,
+    CONF_HOST,
+    CONF_PASSWORD,
     EVENT_STATE_CHANGED,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -33,12 +48,13 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
-from . import assert_entities, assert_entities_alt, setup_platform
+from . import assert_entities, assert_entities_alt, mock_config_entry, setup_platform
 from .const import (
     ENERGY_TOTALS,
     ENERGY_TOTALS_NULL,
     LIVE_STATUS,
     METADATA,
+    POWERWALL_STATUS,
     PRODUCTS,
     SITE_INFO,
     VEHICLE_DATA_ALT,
@@ -1338,3 +1354,219 @@ async def test_location_sensors_require_location_scope(
             )
             is not None
         ) is expected
+
+
+SITE_ID = 123456
+ISLANDER_KEYS = tuple(
+    key
+    for phase in (1, 2, 3)
+    for side in ("load", "main")
+    for key in (f"island_freq_l{phase}_{side}", f"island_voltage_l{phase}n_{side}")
+)
+
+# aiopowerwall's PowerwallClient parses the PEM at construction time, so tests
+# that build one need a real (if undersized, for speed) RSA key rather than
+# arbitrary bytes.
+_TEST_RSA_KEY_PEM = rsa.generate_private_key(
+    public_exponent=65537, key_size=1024
+).private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
+    encryption_algorithm=serialization.NoEncryption(),
+)
+
+
+async def _setup_paired(hass: HomeAssistant) -> MockConfigEntry:
+    """Set up the sensor platform with the energy site paired locally."""
+    entry = mock_config_entry()
+    entry = MockConfigEntry(
+        domain=entry.domain,
+        version=entry.version,
+        minor_version=entry.minor_version,
+        unique_id=entry.unique_id,
+        data=dict(entry.data),
+        subentries_data=[
+            ConfigSubentryData(
+                subentry_type=SUBENTRY_TYPE_ENERGY_SITE,
+                unique_id=str(SITE_ID),
+                title="Energy Site",
+                data={
+                    CONF_SITE_ID: SITE_ID,
+                    CONF_HOST: "192.168.91.1",
+                    CONF_PASSWORD: "abcde",
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch(
+            "homeassistant.components.teslemetry._async_get_rsa_key_pem",
+            return_value=_TEST_RSA_KEY_PEM,
+        ),
+        patch("homeassistant.components.teslemetry.PLATFORMS", [Platform.SENSOR]),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+def _islander_entity_ids(entity_registry: er.EntityRegistry) -> dict[str, str]:
+    """Return the entity ids of the local islander sensors by key."""
+    return {
+        key: entity_id
+        for key in ISLANDER_KEYS
+        if (
+            entity_id := entity_registry.async_get_entity_id(
+                Platform.SENSOR, DOMAIN, f"{SITE_ID}-{key}"
+            )
+        )
+    }
+
+
+def _without(*path: str) -> dict[str, Any]:
+    """Return the gateway status without the key at a path."""
+    data = deepcopy(POWERWALL_STATUS)
+    parent = data
+    for key in path[:-1]:
+        parent = parent[key]
+    del parent[path[-1]]
+    return data
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_local_islander_sensors(
+    hass: HomeAssistant,
+    snapshot: SnapshotAssertion,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Test a paired energy site creates the local islander sensors."""
+    await _setup_paired(hass)
+
+    entity_ids = _islander_entity_ids(entity_registry)
+    assert entity_ids.keys() == set(ISLANDER_KEYS)
+    for entity_id in entity_ids.values():
+        assert entity_registry.async_get(entity_id) == snapshot(
+            name=f"{entity_id}-entry"
+        )
+        assert hass.states.get(entity_id) == snapshot(name=f"{entity_id}-state")
+
+
+async def test_local_islander_sensors_enabled_by_default(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Test only the L1 islander voltages are enabled by default."""
+    await _setup_paired(hass)
+
+    assert {
+        key
+        for key, entity_id in _islander_entity_ids(entity_registry).items()
+        if (entry := entity_registry.async_get(entity_id)) and not entry.disabled
+    } == {"island_voltage_l1n_load", "island_voltage_l1n_main"}
+
+
+async def test_local_islander_sensors_unpaired(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+) -> None:
+    """Test an energy site without local pairing creates no islander sensors."""
+    await setup_platform(hass, [Platform.SENSOR])
+
+    mock_powerwall_status.assert_not_called()
+    assert not _islander_entity_ids(entity_registry)
+
+
+@pytest.mark.parametrize(
+    ("status", "missing"),
+    [
+        pytest.param(
+            _without("esCan", "bus", "ISLANDER"), set(ISLANDER_KEYS), id="no_islander"
+        ),
+        pytest.param(
+            _without(
+                "esCan", "bus", "ISLANDER", "ISLAND_AcMeasurements", "ISLAND_VL3N_Main"
+            ),
+            {"island_voltage_l3n_main"},
+            id="one_signal",
+        ),
+    ],
+)
+async def test_local_islander_sensors_missing_signal(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    status: dict[str, Any],
+    missing: set[str],
+) -> None:
+    """Test a signal absent from the first refresh skips its sensor."""
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = status
+
+    await _setup_paired(hass)
+
+    assert _islander_entity_ids(entity_registry).keys() == set(ISLANDER_KEYS) - missing
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_local_islander_sensors_first_refresh_failure(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test sensors from a failed first local refresh recover without a reload."""
+    mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
+
+    entry = await _setup_paired(hass)
+
+    assert entry.state is ConfigEntryState.LOADED
+    entity_ids = _islander_entity_ids(entity_registry)
+    assert entity_ids.keys() == set(ISLANDER_KEYS)
+    for entity_id in entity_ids.values():
+        assert (state := hass.states.get(entity_id))
+        assert state.state == STATE_UNAVAILABLE
+
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = POWERWALL_STATUS
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert (state := hass.states.get(entity_ids["island_voltage_l1n_main"]))
+    assert state.state == "240.5"
+
+
+async def test_local_islander_sensors_poll_failure(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_status: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a failed local poll makes the sensors unavailable until it recovers."""
+    await _setup_paired(hass)
+    entity_id = _islander_entity_ids(entity_registry)["island_voltage_l1n_main"]
+    assert (state := hass.states.get(entity_id))
+    assert state.state == "240.5"
+
+    mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert (state := hass.states.get(entity_id))
+    assert state.state == STATE_UNAVAILABLE
+
+    status = deepcopy(POWERWALL_STATUS)
+    status["esCan"]["bus"]["ISLANDER"]["ISLAND_AcMeasurements"]["ISLAND_VL1N_Main"] = (
+        0.0
+    )
+    mock_powerwall_status.side_effect = None
+    mock_powerwall_status.return_value = status
+    freezer.tick(LOCAL_STATUS_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert (state := hass.states.get(entity_id))
+    assert state.state == "0.0"
