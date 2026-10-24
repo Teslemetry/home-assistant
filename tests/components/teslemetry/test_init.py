@@ -1274,22 +1274,57 @@ async def _async_raise_credits_issue(hass: HomeAssistant) -> str:
     return entry.entry_id
 
 
+def _credits_charge(balance: int, quota_fraction_used: float) -> dict[str, object]:
+    """Return the credits a command charges, as the stream sends them."""
+    return {
+        "type": "command",
+        "cost": 1,
+        "accounting": {
+            "quota_fraction_used": quota_fraction_used,
+            "quota_credits_used": 1,
+            "balance_credits_used": 0,
+        },
+        "name": "flash_lights",
+        "balance": balance,
+    }
+
+
 @pytest.mark.parametrize(
-    ("balance", "quota", "cleared"),
+    ("credits", "cleared"),
     [
-        pytest.param(1000, {}, True, id="balance"),
         pytest.param(
-            0,
-            {"used": 100, "fraction": 0.5, "reset_at": "2026-11-01T00:00:00.000Z"},
+            {"type": "topup", "cost": -1000, "name": "topup", "balance": 1000},
             True,
-            id="quota",
+            id="topup",
         ),
-        pytest.param(10, {}, False, id="low_balance"),
         pytest.param(
-            0,
-            {"used": 200, "fraction": 1.0, "reset_at": "2026-11-01T00:00:00.000Z"},
+            _credits_charge(0, 0.001)
+            | {
+                "quota": {
+                    "used": 500,
+                    "fraction": 0.5,
+                    "reset_at": "2026-11-01T00:00:00.000Z",
+                    "anchor_day": 1,
+                    "lifetime": 5000,
+                }
+            },
+            True,
+            id="quota_available",
+        ),
+        pytest.param(_credits_charge(10, 0), False, id="low_balance"),
+        pytest.param(
+            _credits_charge(0, 0.001)
+            | {
+                "quota": {
+                    "used": 990,
+                    "fraction": 0.99,
+                    "reset_at": "2026-11-01T00:00:00.000Z",
+                    "anchor_day": 1,
+                    "lifetime": 5000,
+                }
+            },
             False,
-            id="quota_used",
+            id="quota_nearly_used",
         ),
     ],
 )
@@ -1297,24 +1332,14 @@ async def test_insufficient_credits_cleared_by_stream(
     hass: HomeAssistant,
     issue_registry: ir.IssueRegistry,
     mock_add_listener: AsyncMock,
-    balance: int,
-    quota: dict[str, Any],
+    credits: dict[str, object],
     cleared: bool,
 ) -> None:
     """Test a credits event deletes the repair only once credits are available."""
     entry_id = await _async_raise_credits_issue(hass)
 
     mock_add_listener.send(
-        {
-            "credits": {
-                "type": "topup",
-                "cost": -1000,
-                "name": "topup",
-                "balance": balance,
-                "quota": quota,
-            },
-            "createdAt": "2026-10-24T00:00:00.000Z",
-        }
+        {"credits": credits, "createdAt": "2026-10-24T00:00:00.000Z"}
     )
     await hass.async_block_till_done()
 
@@ -1322,7 +1347,7 @@ async def test_insufficient_credits_cleared_by_stream(
     assert (issue is None) is cleared
 
 
-async def test_insufficient_credits_kept_on_reload(
+async def test_insufficient_credits_kept_on_reload_deleted_on_remove(
     hass: HomeAssistant, issue_registry: ir.IssueRegistry
 ) -> None:
     """Test a reload keeps the repair, and removing the entry deletes it."""
