@@ -2363,6 +2363,36 @@ async def test_local_powerwall_3_sensors(
         )
 
 
+async def test_local_powerwall_3_sensors_enabled_by_default(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Test only the Powerwall 3 battery and AC real power are enabled by default."""
+    entry = await setup_paired_platform(hass, [Platform.SENSOR])
+
+    keys = (
+        "battery_power",
+        "ac_power",
+        "ac_voltage_ab",
+        "ac_voltage_an",
+        "ac_voltage_bn",
+        "ac_frequency",
+        "pch_state",
+        "pch_firmware",
+        "pws_firmware",
+    )
+    assert {
+        entity.unique_id
+        for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        if entity.unique_id.startswith(f"{SITE_ID}-{LEADER_DIN}-")
+        and entity.unique_id.endswith(keys)
+        and not entity.disabled
+    } == {
+        f"{SITE_ID}-{LEADER_DIN}-battery_power",
+        f"{SITE_ID}-{LEADER_DIN}-ac_power",
+    }
+
+
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_local_powerwall_3_sensors_skip_expansion_slot(
     hass: HomeAssistant,

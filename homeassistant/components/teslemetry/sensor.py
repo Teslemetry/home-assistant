@@ -1941,6 +1941,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         suggested_display_precision=1,
+        entity_registry_enabled_default=False,
         powerwall_only=True,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
@@ -1952,6 +1953,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         suggested_display_precision=1,
+        entity_registry_enabled_default=False,
         powerwall_only=True,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
@@ -1963,6 +1965,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         suggested_display_precision=1,
+        entity_registry_enabled_default=False,
         powerwall_only=True,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
@@ -1974,6 +1977,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfFrequency.HERTZ,
         suggested_display_precision=2,
+        entity_registry_enabled_default=False,
         powerwall_only=True,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
