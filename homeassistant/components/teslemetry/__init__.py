@@ -14,6 +14,7 @@ from aiopowerwall import (
     PowerwallEnergySite,
     PowerwallError,
     PowerwallRateLimitError,
+    battery_units,
 )
 from bleak.exc import BleakError
 from tesla_fleet_api.const import Scope
@@ -960,6 +961,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
     # Setup energy devices with models, versions, and listeners
     for energysite in energysites:
         async_setup_energy_device(hass, entry, energysite, device_registry)
+        current_devices |= _async_setup_local_battery_units(
+            hass, entry, energysite, device_registry
+        )
 
     # Remove devices that are no longer present
     for device_entry in dr.async_entries_for_config_entry(
@@ -1284,6 +1288,40 @@ def create_handle_vehicle_stream(
             coordinator.async_set_updated_data(coordinator.data)
 
     return handle_vehicle_stream
+
+
+def _async_setup_local_battery_units(
+    hass: HomeAssistant,
+    entry: TeslemetryConfigEntry,
+    energysite: TeslemetryEnergyData,
+    device_registry: dr.DeviceRegistry,
+) -> set[tuple[str, str]]:
+    """Match the battery units of a paired site and return their device identifiers."""
+    status = energysite.local_status_coordinator
+    components = energysite.local_components_coordinator
+    if status is None or components is None:
+        return set()
+    if not (status.last_update_success and components.last_update_success):
+        # Keep the battery unit devices of a gateway unreachable at startup.
+        site_device_id = dr.async_get_device_id_by_identifier(
+            hass, (DOMAIN, str(energysite.id)), config_entry_id=entry.entry_id
+        )
+        return {
+            identifier
+            for device_entry in dr.async_entries_for_config_entry(
+                device_registry, entry.entry_id
+            )
+            if device_entry.via_device_id == site_device_id
+            for identifier in device_entry.identifiers
+        }
+    # The status, components and config documents refresh on different
+    # intervals, so the battery units are matched once from the first refresh.
+    energysite.local_battery_units = {
+        unit_id: unit
+        for unit in battery_units({}, status.data, components.data)
+        if (unit_id := unit.din or unit.serial_number)
+    }
+    return {(DOMAIN, unit_id) for unit_id in energysite.local_battery_units}
 
 
 def async_setup_energy_device(

@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from aiopowerwall import BatteryUnit
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
 from tesla_fleet_api.router import VehicleRouter
@@ -133,3 +134,5 @@ class TeslemetryEnergyData:
     local_status_coordinator: TeslemetryLocalStatusCoordinator | None = None
     local_components_coordinator: TeslemetryLocalComponentsCoordinator | None = None
     local_config_coordinator: TeslemetryLocalConfigCoordinator | None = None
+    # Battery units by device identifier: DIN, or serial for an expansion without one.
+    local_battery_units: dict[str, BatteryUnit] = field(default_factory=dict)

@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any, override
 
 from aiopowerwall import (
+    BatteryUnit,
     component_float,
     component_signal,
     current_power,
@@ -57,6 +58,7 @@ from .entity import (
     TeslemetryEnergyLocalComponentsEntity,
     TeslemetryEnergyLocalConfigEntity,
     TeslemetryEnergyLocalStatusEntity,
+    TeslemetryEnergyLocalUnitEntity,
     TeslemetryVehiclePollingEntity,
     TeslemetryVehicleStreamEntity,
     TeslemetryWallConnectorEntity,
@@ -1851,6 +1853,39 @@ ENERGY_LOCAL_CONFIG_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class TeslemetryLocalUnitSensorEntityDescription(SensorEntityDescription):
+    """Describes a Teslemetry sensor of one battery unit read from the local gateway."""
+
+    value_fn: Callable[[dict[str, Any], int], StateType]
+
+
+ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
+    TeslemetryLocalUnitSensorEntityDescription, ...
+] = (
+    TeslemetryLocalUnitSensorEntityDescription(
+        key="energy_remaining",
+        value_fn=lambda data, slot: component_float(
+            data, "bms", "BMS_nominalEnergyRemaining", slot
+        ),
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=2,
+    ),
+    TeslemetryLocalUnitSensorEntityDescription(
+        key="full_pack_energy",
+        value_fn=lambda data, slot: component_float(
+            data, "bms", "BMS_nominalFullPackEnergy", slot
+        ),
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=2,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: TeslemetryConfigEntry,
@@ -1973,6 +2008,15 @@ async def async_setup_entry(
         # Without a first config, add every sensor so they recover with the gateway.
         if config_coordinator.data is None
         or description.value_fn(config_coordinator.data) is not None
+    )
+
+    entities.extend(
+        TeslemetryEnergyLocalUnitSensorEntity(energysite, unit_id, unit, description)
+        for energysite in entry.runtime_data.energysites
+        if (coordinator := energysite.local_components_coordinator)
+        for unit_id, unit in energysite.local_battery_units.items()
+        for description in ENERGY_LOCAL_UNIT_DESCRIPTIONS
+        if description.value_fn(coordinator.data, unit.component_slot) is not None
     )
 
     if entry.runtime_data.stream is not None:
@@ -2312,6 +2356,33 @@ class TeslemetryEnergyLocalSensorEntity(
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class TeslemetryEnergyLocalUnitSensorEntity(
+    TeslemetryEnergyLocalUnitEntity, SensorEntity
+):
+    """Teslemetry sensor of one battery unit read from the local gateway."""
+
+    entity_description: TeslemetryLocalUnitSensorEntityDescription
+
+    def __init__(
+        self,
+        data: TeslemetryEnergyData,
+        unit_id: str,
+        unit: BatteryUnit,
+        description: TeslemetryLocalUnitSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        self.entity_description = description
+        super().__init__(data, unit_id, unit, description.key)
+
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.entity_description.value_fn(
+            self.coordinator.data, self.unit.component_slot
+        )
 
 
 class TeslemetryCreditBalanceSensor(RestoreSensor):
