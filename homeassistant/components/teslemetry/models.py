@@ -134,5 +134,5 @@ class TeslemetryEnergyData:
     local_status_coordinator: TeslemetryLocalStatusCoordinator | None = None
     local_components_coordinator: TeslemetryLocalComponentsCoordinator | None = None
     local_config_coordinator: TeslemetryLocalConfigCoordinator | None = None
-    # Battery units by device identifier: DIN, or serial for an expansion without one.
+    # Battery units by DIN, or by serial number for an expansion.
     local_battery_units: dict[str, BatteryUnit] = field(default_factory=dict)

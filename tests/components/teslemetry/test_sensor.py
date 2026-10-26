@@ -85,7 +85,7 @@ LOCAL_COMPONENTS_KEYS = (
 
 LOCAL_UNIT_KEYS = ("energy_remaining", "full_pack_energy")
 LEADER_DIN = "1707000-30-L--TG10000000000A"
-# Without the gateway config document, expansions are keyed by serial number.
+# Powerwalls are keyed by DIN and expansions by serial number.
 LOCAL_UNIT_IDS = (LEADER_DIN, "TG10000000002C", "TG10000000003D")
 
 # Per-tire TPMS warning objects including the Tesla Semi.
@@ -2122,7 +2122,7 @@ async def test_local_unit_sensors(
     for unit_id in LOCAL_UNIT_IDS:
         assert (
             device := device_registry.async_get_device_by_identifier(
-                (DOMAIN, unit_id), entry.entry_id
+                (DOMAIN, f"{SITE_ID}-{unit_id}"), entry.entry_id
             )
         )
         assert device == snapshot(name=f"{unit_id}-device")
@@ -2144,8 +2144,9 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
     entity_registry: er.EntityRegistry,
     device_registry: dr.DeviceRegistry,
     mock_powerwall_components: AsyncMock,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
-    """Test a gateway unreachable at startup keeps the battery unit devices."""
+    """Test unit devices survive a gateway unreachable at startup and recover."""
     entry = await setup_paired_platform(hass, [Platform.SENSOR])
     entity_ids = _local_unit_entity_ids(entity_registry)
     assert entity_ids
@@ -2161,12 +2162,22 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
         await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
 
+        assert entry.state is ConfigEntryState.LOADED
+        for unit_id in LOCAL_UNIT_IDS:
+            assert device_registry.async_get_device_by_identifier(
+                (DOMAIN, f"{SITE_ID}-{unit_id}"), entry.entry_id
+            )
+        assert _local_unit_entity_ids(entity_registry) == entity_ids
+        assert hass.states.get(entity_ids[0]).state == STATE_UNAVAILABLE
+
+        # The first answer from the gateway matches the units and adds their entities.
+        mock_powerwall_components.side_effect = lambda: deepcopy(POWERWALL_COMPONENTS)
+        freezer.tick(LOCAL_COMPONENTS_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
     assert entry.state is ConfigEntryState.LOADED
-    for unit_id in LOCAL_UNIT_IDS:
-        assert device_registry.async_get_device_by_identifier(
-            (DOMAIN, unit_id), entry.entry_id
-        )
-    assert _local_unit_entity_ids(entity_registry) == entity_ids
+    assert hass.states.get(entity_ids[0]).state == "10.54"
 
 
 async def test_local_unit_without_serial_skipped(

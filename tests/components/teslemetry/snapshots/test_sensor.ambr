@@ -2111,7 +2111,7 @@
     'identifiers': set({
       tuple(
         'teslemetry',
-        '1707000-30-L--TG10000000000A',
+        '123456-1707000-30-L--TG10000000000A',
       ),
     }),
     'labels': set({
@@ -2141,7 +2141,7 @@
     'identifiers': set({
       tuple(
         'teslemetry',
-        'TG10000000002C',
+        '123456-TG10000000002C',
       ),
     }),
     'labels': set({
@@ -2171,7 +2171,7 @@
     'identifiers': set({
       tuple(
         'teslemetry',
-        'TG10000000003D',
+        '123456-TG10000000003D',
       ),
     }),
     'labels': set({
@@ -2198,7 +2198,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', '1707000-30-L--TG10000000000A')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-1707000-30-L--TG10000000000A')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,
@@ -2256,7 +2256,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', 'TG10000000002C')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-TG10000000002C')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,
@@ -2314,7 +2314,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', 'TG10000000003D')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-TG10000000003D')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,
@@ -2372,7 +2372,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', 'TG10000000002C')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-TG10000000002C')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,
@@ -2430,7 +2430,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', 'TG10000000003D')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-TG10000000003D')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,
@@ -2488,7 +2488,7 @@
     'config_entry_id': <ANY>,
     'config_subentry_id': <ANY>,
     'device_class': None,
-    'device_id': <DeviceEntry identifiers=[('teslemetry', '1707000-30-L--TG10000000000A')]>,
+    'device_id': <DeviceEntry identifiers=[('teslemetry', '123456-1707000-30-L--TG10000000000A')]>,
     'disabled_by': None,
     'domain': 'sensor',
     'entity_category': None,

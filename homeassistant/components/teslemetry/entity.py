@@ -1,7 +1,7 @@
 """Teslemetry parent entity class."""
 
 from abc import abstractmethod
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
 
 from aiopowerwall import BatteryUnit
 from tesla_fleet_api.const import Scope
@@ -321,13 +321,14 @@ class TeslemetryEnergyLocalUnitEntity(
         """Initialize common aspects of a Teslemetry local battery unit entity."""
 
         coordinator = data.local_components_coordinator
-        assert coordinator
+        if TYPE_CHECKING:
+            assert coordinator
 
         self.unit = unit
         self._attr_translation_key = key
         self._attr_unique_id = f"{data.id}-{unit_id}-{key}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, unit_id)},
+            identifiers={(DOMAIN, f"{data.id}-{unit_id}")},
             manufacturer="Tesla",
             name="Powerwall expansion" if unit.role == "expansion" else "Powerwall",
             serial_number=unit.serial_number,

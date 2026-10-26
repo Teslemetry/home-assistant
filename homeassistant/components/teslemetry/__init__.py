@@ -1301,27 +1301,36 @@ def _async_setup_local_battery_units(
     components = energysite.local_components_coordinator
     if status is None or components is None:
         return set()
+    prefix = f"{energysite.id}-"
     if not (status.last_update_success and components.last_update_success):
+
+        @callback
+        def _async_reload_on_recovery() -> None:
+            if status.last_update_success and components.last_update_success:
+                hass.config_entries.async_schedule_reload(entry.entry_id)
+
+        # The units are only known from the gateway, so match them once it answers.
+        entry.async_on_unload(components.async_add_listener(_async_reload_on_recovery))
         # Keep the battery unit devices of a gateway unreachable at startup.
-        site_device_id = dr.async_get_device_id_by_identifier(
-            hass, (DOMAIN, str(energysite.id)), config_entry_id=entry.entry_id
-        )
         return {
             identifier
             for device_entry in dr.async_entries_for_config_entry(
                 device_registry, entry.entry_id
             )
-            if device_entry.via_device_id == site_device_id
             for identifier in device_entry.identifiers
+            if identifier[1].startswith(prefix)
         }
     # The status, components and config documents refresh on different
     # intervals, so the battery units are matched once from the first refresh.
+    # An expansion is keyed by serial, as its DIN is only in the config document.
     energysite.local_battery_units = {
         unit_id: unit
         for unit in battery_units({}, status.data, components.data)
-        if (unit_id := unit.din or unit.serial_number)
+        if (unit_id := unit.serial_number if unit.role == "expansion" else unit.din)
     }
-    return {(DOMAIN, unit_id) for unit_id in energysite.local_battery_units}
+    return {
+        (DOMAIN, f"{prefix}{unit_id}") for unit_id in energysite.local_battery_units
+    }
 
 
 def async_setup_energy_device(
