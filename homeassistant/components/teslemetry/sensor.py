@@ -2014,7 +2014,10 @@ async def async_setup_entry(
         if (coordinator := energysite.local_components_coordinator) is None:
             continue
         if energysite.match_battery_units() is not None:
-            entities.extend(_local_unit_sensors(energysite))
+            async_add_entities(
+                _local_unit_sensors(energysite),
+                config_subentry_id=energysite.subentry_id,
+            )
             continue
         # The gateway was unreachable at startup, so add the units once it answers.
         entry.async_on_unload(
@@ -2385,7 +2388,9 @@ def _async_add_local_unit_sensors(
 ) -> None:
     """Add the battery unit sensors on the first answer from the local gateway."""
     if energysite.local_battery_units is None and energysite.match_battery_units():
-        async_add_entities(_local_unit_sensors(energysite))
+        async_add_entities(
+            _local_unit_sensors(energysite), config_subentry_id=energysite.subentry_id
+        )
 
 
 class TeslemetryEnergyLocalUnitSensorEntity(

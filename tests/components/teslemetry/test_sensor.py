@@ -2105,13 +2105,15 @@ async def test_local_unit_sensors(
 ) -> None:
     """Test a paired energy site creates a device with energy sensors per battery unit."""
     entry = await setup_paired_platform(hass, [Platform.SENSOR])
+    (subentry_id,) = entry.subentries
 
     entity_ids = _local_unit_entity_ids(entity_registry)
     assert len(entity_ids) == len(LOCAL_UNIT_IDS) * len(LOCAL_UNIT_KEYS)
     for entity_id in entity_ids:
-        assert entity_registry.async_get(entity_id) == snapshot(
+        assert (entity_entry := entity_registry.async_get(entity_id)) == snapshot(
             name=f"{entity_id}-entry"
         )
+        assert entity_entry.config_subentry_id == subentry_id
         assert hass.states.get(entity_id) == snapshot(name=f"{entity_id}-state")
 
     assert (
@@ -2126,6 +2128,7 @@ async def test_local_unit_sensors(
             )
         )
         assert device == snapshot(name=f"{unit_id}-device")
+        assert device.config_subentry_id == subentry_id
         assert device.via_device_id == site.id
 
 
@@ -2186,6 +2189,8 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
     assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get(entity_ids[0]).state == "10.54"
     assert "does not generate unique IDs" not in caplog.text
+    (subentry_id,) = entry.subentries
+    assert entity_registry.async_get(entity_ids[0]).config_subentry_id == subentry_id
 
 
 async def test_local_unit_without_serial_skipped(
