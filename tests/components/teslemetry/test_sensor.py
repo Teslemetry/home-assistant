@@ -2356,8 +2356,10 @@ async def test_local_powerwall_3_sensors(
     }
     # Expansions have no PCH, so they get none of these sensors.
     assert sorted(entries) == sorted(f"{SITE_ID}-{LEADER_DIN}-{key}" for key in keys)
+    (subentry_id,) = entry.subentries
     for entity in entries.values():
         assert entity == snapshot(name=f"{entity.entity_id}-entry")
+        assert entity.config_subentry_id == subentry_id
         assert hass.states.get(entity.entity_id) == snapshot(
             name=f"{entity.entity_id}-state"
         )
