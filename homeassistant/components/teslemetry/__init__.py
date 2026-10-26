@@ -525,7 +525,7 @@ async def _async_resolve_energy_site_api(
         host,
         password,
         key_pem,
-        subentry.data.get(CONF_LEGACY_GATEWAY, False),
+        legacy_gateway=subentry.data.get(CONF_LEGACY_GATEWAY, False),
     )
     try:
         await powerwall_client.connect()
@@ -586,7 +586,7 @@ async def _async_rediscover_gateway(
             host,
             subentry.data[CONF_PASSWORD],
             key_pem,
-            subentry.data.get(CONF_LEGACY_GATEWAY, False),
+            legacy_gateway=subentry.data.get(CONF_LEGACY_GATEWAY, False),
         )
         try:
             await client.connect()

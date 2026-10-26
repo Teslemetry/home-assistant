@@ -165,7 +165,7 @@ class GatewayNotFoundRepairFlow(RepairsFlow):
                 host,
                 self._subentry.data[CONF_PASSWORD],
                 self._key_pem,
-                self._subentry.data.get(CONF_LEGACY_GATEWAY, False),
+                legacy_gateway=self._subentry.data.get(CONF_LEGACY_GATEWAY, False),
             )
         except PowerwallKeyRejectedError:
             return "key_not_approved"

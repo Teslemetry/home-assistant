@@ -50,6 +50,7 @@ def create_powerwall_client(
     host: str,
     password: str,
     key_pem: bytes,
+    *,
     legacy_gateway: bool,
 ) -> PowerwallClient:
     """Return a local Powerwall gateway client on the shared HTTP session."""
@@ -67,11 +68,12 @@ async def async_verify_local_gateway(
     host: str,
     password: str,
     key_pem: bytes,
+    *,
     legacy_gateway: bool,
 ) -> None:
     """Prove the LAN connection and the RSA key against the gateway."""
     async with create_powerwall_client(
-        hass, host, password, key_pem, legacy_gateway
+        hass, host, password, key_pem, legacy_gateway=legacy_gateway
     ) as client:
         await client.connect()
         try:

@@ -662,7 +662,7 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
         part_numbers = [
             gateway["part_number"]
             for gateway in site_info.get("components_gateways", [])
-        ] or [str(site_info.get("id", ""))]
+        ] or [site_info.get("id", "")]
         self._legacy_gateway = any(
             part_number.startswith(GATEWAY_1_PART_NUMBER)
             for part_number in part_numbers
@@ -850,7 +850,11 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
                 password = password[-5:]
             try:
                 await async_verify_local_gateway(
-                    self.hass, host, password, self._key_pem, self._legacy_gateway
+                    self.hass,
+                    host,
+                    password,
+                    self._key_pem,
+                    legacy_gateway=self._legacy_gateway,
                 )
             except PowerwallKeyRejectedError as err:
                 LOGGER.debug("Powerwall rejected the signed read: %s", err.__cause__)
