@@ -2145,6 +2145,7 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
     device_registry: dr.DeviceRegistry,
     mock_powerwall_components: AsyncMock,
     freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test unit devices survive a gateway unreachable at startup and recover."""
     entry = await setup_paired_platform(hass, [Platform.SENSOR])
@@ -2170,14 +2171,21 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
         assert _local_unit_entity_ids(entity_registry) == entity_ids
         assert hass.states.get(entity_ids[0]).state == STATE_UNAVAILABLE
 
-        # The first answer from the gateway matches the units and adds their entities.
+        # The first answer from the gateway matches the units and adds their entities
+        # without a reload.
         mock_powerwall_components.side_effect = lambda: deepcopy(POWERWALL_COMPONENTS)
+        freezer.tick(LOCAL_COMPONENTS_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        # Later polls do not add the units again.
         freezer.tick(LOCAL_COMPONENTS_INTERVAL)
         async_fire_time_changed(hass)
         await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get(entity_ids[0]).state == "10.54"
+    assert "does not generate unique IDs" not in caplog.text
 
 
 async def test_local_unit_without_serial_skipped(

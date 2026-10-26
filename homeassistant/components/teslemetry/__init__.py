@@ -14,7 +14,6 @@ from aiopowerwall import (
     PowerwallEnergySite,
     PowerwallError,
     PowerwallRateLimitError,
-    battery_units,
 )
 from bleak.exc import BleakError
 from tesla_fleet_api.const import Scope
@@ -961,8 +960,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
     # Setup energy devices with models, versions, and listeners
     for energysite in energysites:
         async_setup_energy_device(hass, entry, energysite, device_registry)
-        current_devices |= _async_setup_local_battery_units(
-            hass, entry, energysite, device_registry
+        current_devices |= _async_local_battery_unit_devices(
+            entry, energysite, device_registry
         )
 
     # Remove devices that are no longer present
@@ -1290,46 +1289,25 @@ def create_handle_vehicle_stream(
     return handle_vehicle_stream
 
 
-def _async_setup_local_battery_units(
-    hass: HomeAssistant,
+def _async_local_battery_unit_devices(
     entry: TeslemetryConfigEntry,
     energysite: TeslemetryEnergyData,
     device_registry: dr.DeviceRegistry,
 ) -> set[tuple[str, str]]:
-    """Match the battery units of a paired site and return their device identifiers."""
-    status = energysite.local_status_coordinator
-    components = energysite.local_components_coordinator
-    if status is None or components is None:
+    """Return the device identifiers of the battery units of a paired site."""
+    if energysite.local_components_coordinator is None:
         return set()
     prefix = f"{energysite.id}-"
-    if not (status.last_update_success and components.last_update_success):
-
-        @callback
-        def _async_reload_on_recovery() -> None:
-            if status.last_update_success and components.last_update_success:
-                hass.config_entries.async_schedule_reload(entry.entry_id)
-
-        # The units are only known from the gateway, so match them once it answers.
-        entry.async_on_unload(components.async_add_listener(_async_reload_on_recovery))
-        # Keep the battery unit devices of a gateway unreachable at startup.
-        return {
-            identifier
-            for device_entry in dr.async_entries_for_config_entry(
-                device_registry, entry.entry_id
-            )
-            for identifier in device_entry.identifiers
-            if identifier[1].startswith(prefix)
-        }
-    # The status, components and config documents refresh on different
-    # intervals, so the battery units are matched once from the first refresh.
-    # An expansion is keyed by serial, as its DIN is only in the config document.
-    energysite.local_battery_units = {
-        unit_id: unit
-        for unit in battery_units({}, status.data, components.data)
-        if (unit_id := unit.serial_number if unit.role == "expansion" else unit.din)
-    }
+    if (units := energysite.match_battery_units()) is not None:
+        return {(DOMAIN, f"{prefix}{unit_id}") for unit_id in units}
+    # Keep the battery unit devices of a gateway unreachable at startup.
     return {
-        (DOMAIN, f"{prefix}{unit_id}") for unit_id in energysite.local_battery_units
+        identifier
+        for device_entry in dr.async_entries_for_config_entry(
+            device_registry, entry.entry_id
+        )
+        for identifier in device_entry.identifiers
+        if identifier[1].startswith(prefix)
     }
 
 
