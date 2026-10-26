@@ -2240,8 +2240,10 @@ async def test_local_unit_diagnostic_sensors(
         )
     }
     assert sorted(entries) == sorted(expected)
+    (subentry_id,) = entry.subentries
     for entity in entries.values():
         assert entity == snapshot(name=f"{entity.entity_id}-entry")
+        assert entity.config_subentry_id == subentry_id
         assert hass.states.get(entity.entity_id) == snapshot(
             name=f"{entity.entity_id}-state"
         )
