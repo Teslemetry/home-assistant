@@ -2313,9 +2313,11 @@ async def test_local_follower_pv_string_sensors(
     }
     follower_keys = {f"{SITE_ID}-{follower_din}-{key}" for key in keys}
     assert entries.keys() == leader_keys | follower_keys
+    (subentry_id,) = entry.subentries
     for unique_id in follower_keys:
         entity = entries[unique_id]
         assert entity == snapshot(name=f"{entity.entity_id}-entry")
+        assert entity.config_subentry_id == subentry_id
         assert hass.states.get(entity.entity_id) == snapshot(
             name=f"{entity.entity_id}-state"
         )
