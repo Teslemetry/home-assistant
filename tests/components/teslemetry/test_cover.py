@@ -661,23 +661,14 @@ async def test_cover_rear_trunk_directional(
 
 @pytest.mark.usefixtures("enable_bluetooth", "mock_ble_vehicle")
 @pytest.mark.parametrize(
-    ("restored", "service", "command", "expected"),
+    ("service", "command", "expected"),
     [
-        pytest.param(
-            CoverState.CLOSED,
-            SERVICE_OPEN_COVER,
-            "actuate_trunk",
-            CoverState.OPEN,
-            id="known_toggles",
-        ),
-        pytest.param(
-            STATE_UNKNOWN,
-            SERVICE_CLOSE_COVER,
-            "closure",
-            CoverState.CLOSED,
-            id="unknown_directional",
-        ),
+        (SERVICE_OPEN_COVER, "open_rear_trunk", CoverState.OPEN),
+        (SERVICE_CLOSE_COVER, "close_rear_trunk", CoverState.CLOSED),
     ],
+)
+@pytest.mark.parametrize(
+    "restored", [STATE_UNKNOWN, CoverState.OPEN, CoverState.CLOSED]
 )
 async def test_cover_rear_trunk_bluetooth(
     hass: HomeAssistant,
@@ -686,22 +677,28 @@ async def test_cover_rear_trunk_bluetooth(
     command: str,
     expected: CoverState,
 ) -> None:
-    """Tests that a Bluetooth paired vehicle toggles only while the state is known."""
+    """Tests that a Bluetooth paired vehicle sends the directional command in any state."""
 
     mock_restore_cache(hass, [State(TRUNK_ENTITY_ID, restored)])
     await setup_ble_platform(hass, [Platform.COVER])
 
-    with patch(
-        f"tesla_fleet_api.teslemetry.Vehicle.{command}",
-        return_value=COMMAND_OK,
-    ) as call:
+    with (
+        patch(
+            f"tesla_fleet_api.tesla.vehicle.bluetooth.VehicleBluetooth.{command}",
+            return_value=COMMAND_OK,
+        ) as call,
+        patch("tesla_fleet_api.teslemetry.Vehicle.actuate_trunk") as actuate_trunk,
+        patch("tesla_fleet_api.teslemetry.Vehicle.closure") as closure,
+    ):
         await hass.services.async_call(
             COVER_DOMAIN,
             service,
             {ATTR_ENTITY_ID: [TRUNK_ENTITY_ID]},
             blocking=True,
         )
-    call.assert_called_once()
+    call.assert_called_once_with()
+    actuate_trunk.assert_not_called()
+    closure.assert_not_called()
     assert hass.states.get(TRUNK_ENTITY_ID).state == expected
 
 
