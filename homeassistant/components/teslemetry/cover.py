@@ -459,10 +459,14 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
             .get("proxy")
             is True
         )
-        # Bluetooth only sends the toggle, so a paired vehicle keeps it while the state is known.
-        if isinstance(self.api, VehicleRouter) and self.is_closed is not None:
-            directional = False
-        if directional:
+        if isinstance(self.api, VehicleRouter):
+            self.raise_for_scope(Scope.VEHICLE_CMDS)
+            await handle_vehicle_command(
+                self.api.open_rear_trunk()
+                if state is ClosureState.OPEN
+                else self.api.close_rear_trunk()
+            )
+        elif directional:
             self.raise_for_scope(Scope.VEHICLE_CMDS)
             await handle_vehicle_command(self.api.closure(rear_trunk=state))
         elif self.is_closed is None:
