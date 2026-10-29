@@ -12,7 +12,7 @@ from pytest_homeassistant.common import (
 )
 from syrupy.assertion import SnapshotAssertion
 from tesla_fleet_api.const import ClosureState
-from tesla_fleet_api.exceptions import InvalidCommand
+from tesla_fleet_api.exceptions import BluetoothTransportError, InvalidCommand
 from tesla_fleet_api.tesla.vehicle.bluetooth import VehicleBluetooth
 from teslemetry_stream import Signal
 
@@ -610,9 +610,16 @@ async def test_cover_rear_trunk_unknown_polling(
 
 @pytest.fixture
 def mock_ble_vehicle() -> Generator[VehicleBluetooth]:
-    """Back the paired vehicle with a real VehicleBluetooth that never signs."""
+    """Back the paired vehicle with an in range VehicleBluetooth that never signs."""
     vehicle = VehicleBluetooth(MagicMock(), VIN, key=False, keepalive_interval=None)
-    with patch("homeassistant.components.teslemetry.helpers.TeslaBluetooth") as parent:
+    with (
+        patch("homeassistant.components.teslemetry.helpers.TeslaBluetooth") as parent,
+        # In range, so the router tries Bluetooth before the cloud.
+        patch(
+            "homeassistant.components.teslemetry.async_ble_device_from_address",
+            return_value=MagicMock(),
+        ),
+    ):
         parent.return_value.get_private_key = AsyncMock()
         parent.return_value.vehicles.createBluetooth.return_value = vehicle
         yield vehicle
@@ -699,6 +706,53 @@ async def test_cover_rear_trunk_bluetooth(
     call.assert_called_once_with()
     actuate_trunk.assert_not_called()
     closure.assert_not_called()
+    assert hass.states.get(TRUNK_ENTITY_ID).state == expected
+
+
+@pytest.mark.usefixtures("enable_bluetooth", "mock_ble_vehicle")
+@pytest.mark.parametrize(
+    ("service", "command", "closure_state", "expected"),
+    [
+        (SERVICE_OPEN_COVER, "open_rear_trunk", ClosureState.OPEN, CoverState.OPEN),
+        (
+            SERVICE_CLOSE_COVER,
+            "close_rear_trunk",
+            ClosureState.CLOSE,
+            CoverState.CLOSED,
+        ),
+    ],
+)
+async def test_cover_rear_trunk_bluetooth_cloud_failover(
+    hass: HomeAssistant,
+    service: str,
+    command: str,
+    closure_state: ClosureState,
+    expected: CoverState,
+) -> None:
+    """Tests that a Bluetooth transport failure sends the directional closure over the cloud."""
+
+    await setup_ble_platform(hass, [Platform.COVER])
+
+    with (
+        patch(
+            f"tesla_fleet_api.tesla.vehicle.bluetooth.VehicleBluetooth.{command}",
+            side_effect=BluetoothTransportError,
+        ) as call,
+        patch(
+            "tesla_fleet_api.teslemetry.Vehicle.closure",
+            return_value=COMMAND_OK,
+        ) as closure,
+        patch("tesla_fleet_api.teslemetry.Vehicle.actuate_trunk") as actuate_trunk,
+    ):
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: [TRUNK_ENTITY_ID]},
+            blocking=True,
+        )
+    call.assert_called_once_with()
+    closure.assert_called_once_with(rear_trunk=closure_state)
+    actuate_trunk.assert_not_called()
     assert hass.states.get(TRUNK_ENTITY_ID).state == expected
 
 
