@@ -5,13 +5,7 @@ from itertools import chain
 from typing import Any, Self, override
 
 from tesla_fleet_api import firmware_at_least
-from tesla_fleet_api.const import (
-    ClosureState,
-    Scope,
-    SunRoofCommand,
-    Trunk,
-    WindowCommand,
-)
+from tesla_fleet_api.const import Scope, SunRoofCommand, Trunk, WindowCommand
 from tesla_fleet_api.router import VehicleRouter
 from tesla_fleet_api.teslemetry import Vehicle
 from teslemetry_stream import Signal
@@ -450,25 +444,21 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
     _attr_device_class = CoverDeviceClass.DOOR
     _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE
 
-    async def _async_move(self, state: ClosureState, closed: bool) -> None:
+    async def _async_move(self, closed: bool) -> None:
         """Move the rear trunk to the requested position."""
         # Vehicles without the command protocol report False, and None means unknown.
-        directional = (
+        # A Bluetooth paired vehicle always has it.
+        directional = isinstance(self.api, VehicleRouter) or (
             self.vehicle.config_entry.runtime_data.metadata_coordinator.data["vehicles"]
             .get(self.vehicle.vin, {})
             .get("proxy")
             is True
         )
-        if isinstance(self.api, VehicleRouter):
+        if directional:
             self.raise_for_scope(Scope.VEHICLE_CMDS)
             await handle_vehicle_command(
-                self.api.open_rear_trunk()
-                if state is ClosureState.OPEN
-                else self.api.close_rear_trunk()
+                self.api.close_rear_trunk() if closed else self.api.open_rear_trunk()
             )
-        elif directional:
-            self.raise_for_scope(Scope.VEHICLE_CMDS)
-            await handle_vehicle_command(self.api.closure(rear_trunk=state))
         elif self.is_closed is None:
             # actuate_trunk is a toggle, so it cannot reach a set position from an unknown one.
             raise ServiceValidationError(
@@ -486,12 +476,12 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
     @override
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open rear trunk."""
-        await self._async_move(ClosureState.OPEN, False)
+        await self._async_move(False)
 
     @override
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close rear trunk."""
-        await self._async_move(ClosureState.CLOSE, True)
+        await self._async_move(True)
 
 
 class TeslemetryVehiclePollingRearTrunkEntity(
