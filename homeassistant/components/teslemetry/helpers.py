@@ -5,7 +5,13 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import ClientError
-from aiopowerwall import PowerwallAuthenticationError, PowerwallClient
+from aiopowerwall import (
+    PowerwallAuthenticationError,
+    PowerwallClient,
+    PowerwallCommandError,
+    PowerwallError,
+    PowerwallNotSupportedError,
+)
 from tesla_fleet_api.exceptions import InsufficientCredits, TeslaFleetError
 from tesla_fleet_api.tesla import EnergySiteRouter
 from tesla_fleet_api.tesla.bluetooth import TeslaBluetooth
@@ -39,6 +45,8 @@ if TYPE_CHECKING:
 # that is still nearly exhausted keeps it.
 CREDITS_BALANCE_THRESHOLD = 25
 CREDITS_QUOTA_FRACTION_THRESHOLD = 0.95
+
+GATEWAY_OUT_OF_RANGE = 11
 
 
 class PowerwallKeyRejectedError(Exception):
@@ -169,6 +177,36 @@ async def handle_command(
         ) from e
     LOGGER.debug("Command result: %s", result)
     return result
+
+
+async def handle_local_command(command: Awaitable[None]) -> None:
+    """Handle a command sent to a local Powerwall gateway."""
+    try:
+        await command
+    except PowerwallNotSupportedError as e:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="local_command_not_supported",
+        ) from e
+    except PowerwallCommandError as e:
+        # pylint: disable-next=home-assistant-log-and-raise
+        LOGGER.error("Local Powerwall gateway command failed: %s", e)
+        if e.code == GATEWAY_OUT_OF_RANGE:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="local_command_out_of_range",
+            ) from e
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="local_command_failed",
+        ) from e
+    except PowerwallError as e:
+        # pylint: disable-next=home-assistant-log-and-raise
+        LOGGER.error("Local Powerwall gateway command failed: %s", e)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="local_command_failed",
+        ) from e
 
 
 async def handle_vehicle_command(
