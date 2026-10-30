@@ -38,9 +38,11 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from . import BluesoundConfigEntry
+    from .coordinator import BluesoundConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES = 1
 
 SCAN_INTERVAL = timedelta(minutes=15)
 
