@@ -27,9 +27,12 @@ BLE_ADVERTISEMENT_TIMEOUT = 5
 
 SUBENTRY_TYPE_ENERGY_SITE = "energy_site"
 CONF_SITE_ID = "site_id"
+CONF_LEGACY_GATEWAY = "legacy_gateway"
 POWERWALL_KEY_FILE = "tesla_powerwall.key"
 RSA_PARENT_KEY = f"{DOMAIN}_rsa_parent"
 ISSUE_GATEWAY_NOT_FOUND = "gateway_not_found"
+# Gateway 1 part number; early units log in with the full gateway password.
+GATEWAY_1_PART_NUMBER = "1118431-"
 
 ENERGY_HISTORY_FIELDS = [
     "solar_energy_exported",

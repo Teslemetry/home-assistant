@@ -17,7 +17,12 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
 
 from . import TeslemetryConfigEntry, _async_get_rsa_key_pem
-from .const import ISSUE_GATEWAY_NOT_FOUND, LOGGER, VEHICLE_ISSUE_LEARN_MORE
+from .const import (
+    CONF_LEGACY_GATEWAY,
+    ISSUE_GATEWAY_NOT_FOUND,
+    LOGGER,
+    VEHICLE_ISSUE_LEARN_MORE,
+)
 from .helpers import (
     PowerwallKeyRejectedError,
     async_verify_local_gateway,
@@ -156,7 +161,11 @@ class GatewayNotFoundRepairFlow(RepairsFlow):
             assert self._subentry is not None
         try:
             await async_verify_local_gateway(
-                self.hass, host, self._subentry.data[CONF_PASSWORD], self._key_pem
+                self.hass,
+                host,
+                self._subentry.data[CONF_PASSWORD],
+                self._key_pem,
+                legacy_gateway=self._subentry.data.get(CONF_LEGACY_GATEWAY, False),
             )
         except PowerwallKeyRejectedError:
             return "key_not_approved"
