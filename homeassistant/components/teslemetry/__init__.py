@@ -56,7 +56,7 @@ from homeassistant.const import (
     CONF_PASSWORD,
     Platform,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
