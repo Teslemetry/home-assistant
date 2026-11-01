@@ -328,7 +328,7 @@ async def test_update_streaming_scheduled_expiry(
 
     freezer.tick(elapsed)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is in_progress
@@ -370,18 +370,18 @@ async def test_update_streaming_scheduled_expiry_restarts(
             "createdAt": "2024-10-05T10:45:17.537Z",
         }
     )
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     # Past the first push's deadline, inside the second's.
     freezer.tick(timedelta(days=1, minutes=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is True
 
     freezer.tick(timedelta(days=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is False
     assert state.attributes["update_percentage"] is None
@@ -424,13 +424,13 @@ async def test_update_streaming_scheduled_replay_keeps_expiry(
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
     )
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is True
 
     freezer.tick(timedelta(hours=13))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is False
 
@@ -802,7 +802,7 @@ async def test_update_streaming_restore_current_schedule_expires(
 
     freezer.tick(SCHEDULED_STALE_AFTER + timedelta(seconds=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     state = hass.states.get(entity_id)
     assert state.attributes["in_progress"] is False
@@ -924,7 +924,7 @@ async def test_update_streaming_restore_replayed_schedule(
     # Past the stored deadline, inside a window restarted by the replay.
     freezer.tick(timedelta(days=1, minutes=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     state = hass.states.get(entity_id)
     assert state.attributes["in_progress"] is False
 
