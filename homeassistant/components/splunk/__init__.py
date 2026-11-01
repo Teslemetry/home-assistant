@@ -68,7 +68,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Set up Splunk from a config entry."""
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
@@ -114,6 +114,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             translation_placeholders={"host": host, "port": str(port)},
         ) from err
     except Exception as err:
+        # pylint: disable-next=home-assistant-log-and-raise
         _LOGGER.exception("Unexpected setup error at %s:%s", host, port)
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
@@ -143,8 +144,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await event_collector.queue(json.dumps(payload, cls=JSONEncoder), send=False)
 
+    send_failing = False
+
+    def log_send_failure(level: int, message: str, *args: Any) -> None:
+        """Log a send failure, demoting it to debug while an outage is open."""
+        nonlocal send_failing
+
+        _LOGGER.log(logging.DEBUG if send_failing else level, message, *args)
+        send_failing = True
+
     async def splunk_event_listener(event: Event[EventStateChangedData]) -> None:
         """Listen for new messages on the bus and sends them to Splunk."""
+        nonlocal send_failing
+
         state = event.data.get("new_state")
         if state is None or not entity_filter(state.entity_id):
             return
@@ -167,32 +179,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
 
         try:
-            await event_collector.queue(json.dumps(payload, cls=JSONEncoder), send=True)
+            sent = await event_collector.queue(
+                json.dumps(payload, cls=JSONEncoder), send=True
+            )
         except SplunkPayloadError as err:
             if err.status == HTTPStatus.UNAUTHORIZED:
-                _LOGGER.error("Splunk token unauthorized: %s", err)
-                # Trigger reauth flow
                 entry.async_start_reauth(hass)
+                log_send_failure(logging.ERROR, "Splunk token unauthorized: %s", err)
             else:
-                _LOGGER.warning("Splunk payload error: %s", err)
+                log_send_failure(logging.WARNING, "Splunk payload error: %s", err)
+            return
         except ClientConnectionError as err:
-            _LOGGER.debug("Connection error sending to Splunk: %s", err)
+            log_send_failure(
+                logging.DEBUG, "Connection error sending to Splunk: %s", err
+            )
+            return
         except TimeoutError:
-            _LOGGER.debug("Timeout sending to Splunk at %s:%s", host, port)
+            log_send_failure(
+                logging.DEBUG, "Timeout sending to Splunk at %s:%s", host, port
+            )
+            return
         except ClientResponseError as err:
-            _LOGGER.warning("Splunk response error: %s", err.message)
+            log_send_failure(logging.WARNING, "Splunk response error: %s", err.message)
+            return
         except Exception:
-            _LOGGER.exception("Unexpected error sending event to Splunk")
+            # Logged in the handler, so the traceback is still available.
+            _LOGGER.log(
+                logging.DEBUG if send_failing else logging.ERROR,
+                "Unexpected error sending event to Splunk",
+                exc_info=not send_failing,
+            )
+            send_failing = True
+            return
+
+        if not sent:
+            # Coalesced into an in-flight send, which says nothing about
+            # whether this event reached Splunk.
+            return
+
+        if send_failing:
+            _LOGGER.info("Sending events to Splunk has recovered")
+            send_failing = False
 
     # Store the event listener cancellation callback
     entry.async_on_unload(
         hass.bus.async_listen(EVENT_STATE_CHANGED, splunk_event_listener)
     )
 
-    return True
 
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Unload a config entry."""
     # The event listener is automatically removed by async_on_unload
-    return True

@@ -7,6 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
+from pytest_homeassistant.common import (
+    async_fire_time_changed,
+    async_mock_restore_state_shutdown_restart,
+    mock_restore_cache,
+    mock_restore_cache_with_extra_data,
+)
 from syrupy.assertion import SnapshotAssertion
 from teslemetry_stream import Signal
 
@@ -27,13 +33,6 @@ from homeassistant.util import dt as dt_util
 
 from . import assert_entities, reload_platform, setup_platform
 from .const import COMMAND_OK, VEHICLE_DATA, VEHICLE_DATA_ALT
-
-from tests.common import (
-    async_fire_time_changed,
-    async_mock_restore_state_shutdown_restart,
-    mock_restore_cache,
-    mock_restore_cache_with_extra_data,
-)
 
 
 async def test_update(

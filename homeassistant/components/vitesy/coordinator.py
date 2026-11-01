@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from typing import override
 
-from aiovitesy.api import VitesyApi, VitesyDevice
+from aiovitesy.api import VitesyApi, VitesyDevice, VitesyModeStatus
 from aiovitesy.exceptions import CannotAuthenticate, VitesyError
 
 from homeassistant.config_entries import ConfigEntry
@@ -22,22 +22,17 @@ type VitesyConfigEntry = ConfigEntry[VitesyDataUpdateCoordinator]
 UPDATE_INTERVAL = timedelta(minutes=5)
 
 
-@contextmanager
-def _translate_errors(*, auth_recoverable: bool = False) -> Iterator[None]:
-    """Convert aiovitesy errors into coordinator setup/update failures.
+def supports_mode(device: VitesyDevice) -> bool:
+    """Return True for devices whose mode can be read and set (Shelfy)."""
+    return device.device_type.upper().startswith("SHELFY")
 
-    On a refresh, auth_recoverable must be True: the config flow has no
-    reauth step yet, so raising ConfigEntryAuthFailed there would stop
-    polling forever with no way to recover.
-    """
+
+@contextmanager
+def _translate_errors() -> Iterator[None]:
+    """Convert aiovitesy errors into coordinator setup/update failures."""
     try:
         yield
     except CannotAuthenticate as err:
-        if auth_recoverable:
-            raise UpdateFailed(
-                translation_domain=DOMAIN,
-                translation_key="invalid_auth",
-            ) from err
         raise ConfigEntryAuthFailed(
             translation_domain=DOMAIN,
             translation_key="invalid_auth",
@@ -67,6 +62,7 @@ class VitesyDataUpdateCoordinator(DataUpdateCoordinator[dict[str, VitesyDevice]]
             config_entry.data[CONF_PASSWORD],
             async_get_clientsession(hass),
         )
+        self.mode_status: dict[str, VitesyModeStatus] = {}
 
     @override
     async def _async_setup(self) -> None:
@@ -77,5 +73,31 @@ class VitesyDataUpdateCoordinator(DataUpdateCoordinator[dict[str, VitesyDevice]]
     @override
     async def _async_update_data(self) -> dict[str, VitesyDevice]:
         """Fetch the latest state for every device in the account."""
-        with _translate_errors(auth_recoverable=True):
-            return await self.api.get_all_devices()
+        with _translate_errors():
+            devices = await self.api.get_all_devices()
+        self.mode_status = await self._async_get_mode_status(devices)
+        return devices
+
+    async def _async_get_mode_status(
+        self, devices: dict[str, VitesyDevice]
+    ) -> dict[str, VitesyModeStatus]:
+        """Read the mode of every device that supports it.
+
+        The mode lives in the device's AWS IoT shadow, not the REST API, so a
+        failure there only drops that device's mode instead of failing the
+        whole refresh.
+        """
+        mode_status: dict[str, VitesyModeStatus] = {}
+        for device_id, device in devices.items():
+            if not supports_mode(device):
+                continue
+            try:
+                mode_status[device_id] = await self.api.get_mode_status(device_id)
+            except CannotAuthenticate as err:
+                raise ConfigEntryAuthFailed(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_auth",
+                ) from err
+            except VitesyError as err:
+                LOGGER.debug("Could not read mode of %s: %s", device.name, err)
+        return mode_status
