@@ -38,6 +38,7 @@ SCHEDULED = "scheduled"
 PARALLEL_UPDATES = 0
 
 ATTR_SCHEDULED_AT = "scheduled_at"
+ATTR_SCHEDULED_START = "scheduled_start"
 ATTR_DOWNLOAD_PERCENTAGE = "download_percentage"
 ATTR_INSTALL_PERCENTAGE = "install_percentage"
 
@@ -50,6 +51,7 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
     """Extra stored data for the streaming update entity."""
 
     scheduled_at: datetime | None = None
+    scheduled_start: int | None = None
     download_percentage: int | None = None
     install_percentage: int | None = None
 
@@ -60,6 +62,7 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
             ATTR_SCHEDULED_AT: self.scheduled_at.isoformat()
             if self.scheduled_at is not None
             else None,
+            ATTR_SCHEDULED_START: self.scheduled_start,
             ATTR_DOWNLOAD_PERCENTAGE: self.download_percentage,
             ATTR_INSTALL_PERCENTAGE: self.install_percentage,
         }
@@ -69,6 +72,7 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
         """Initialize the extra data from a dict."""
         try:
             scheduled_at = data[ATTR_SCHEDULED_AT]
+            scheduled_start = data[ATTR_SCHEDULED_START]
             download_percentage = data[ATTR_DOWNLOAD_PERCENTAGE]
             install_percentage = data[ATTR_INSTALL_PERCENTAGE]
         except KeyError:
@@ -77,6 +81,7 @@ class TeslemetryUpdateExtraStoredData(ExtraStoredData):
             scheduled_at=dt_util.parse_datetime(scheduled_at)
             if scheduled_at is not None
             else None,
+            scheduled_start=scheduled_start,
             download_percentage=download_percentage,
             install_percentage=install_percentage,
         )
@@ -190,6 +195,7 @@ class TeslemetryStreamingUpdateEntity(
     _install_percentage: int | None = None
     _scheduled: bool = False
     _scheduled_at: datetime | None = None
+    _scheduled_start: int | None = None
     _cancel_scheduled_expiry: CALLBACK_TYPE | None = None
 
     def __init__(
@@ -213,6 +219,7 @@ class TeslemetryStreamingUpdateEntity(
             extra = TeslemetryUpdateExtraStoredData.from_dict(extra_data.as_dict())
         if extra is not None:
             self._scheduled_at = extra.scheduled_at
+            self._scheduled_start = extra.scheduled_start
         if (state := await self.async_get_last_state()) is not None:
             self._attr_installed_version = state.attributes.get(
                 UpdateEntityStateAttribute.INSTALLED_VERSION
@@ -307,6 +314,10 @@ class TeslemetryStreamingUpdateEntity(
     ) -> None:
         """Handle software update scheduled start time."""
 
+        # Every stream connect replays the cached value, which is not a new schedule.
+        if value is not None and value == self._scheduled_start:
+            return
+        self._scheduled_start = value
         self._scheduled = value is not None
         # Arrival time, not the value: Tesla reports these timestamps skewed.
         self._scheduled_at = dt_util.utcnow() if value is not None else None
@@ -387,6 +398,7 @@ class TeslemetryStreamingUpdateEntity(
         """Return entity specific state data to be restored."""
         return TeslemetryUpdateExtraStoredData(
             scheduled_at=self._scheduled_at,
+            scheduled_start=self._scheduled_start,
             download_percentage=self._download_percentage,
             install_percentage=self._install_percentage,
         )

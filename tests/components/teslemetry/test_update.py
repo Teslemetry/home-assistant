@@ -21,6 +21,7 @@ from homeassistant.components.teslemetry.update import (
     ATTR_DOWNLOAD_PERCENTAGE,
     ATTR_INSTALL_PERCENTAGE,
     ATTR_SCHEDULED_AT,
+    ATTR_SCHEDULED_START,
     INSTALLING,
     SCHEDULED_STALE_AFTER,
 )
@@ -33,6 +34,8 @@ from homeassistant.util import dt as dt_util
 
 from . import assert_entities, reload_platform, setup_platform
 from .const import COMMAND_OK, VEHICLE_DATA, VEHICLE_DATA_ALT
+
+SCHEDULED_START = 1735689600
 
 
 async def test_update(
@@ -234,7 +237,7 @@ async def test_update_streaming_scheduled_not_clobbered(
             "data": {
                 Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
                 Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
             },
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
@@ -312,7 +315,7 @@ async def test_update_streaming_scheduled_expiry(
             "vin": VEHICLE_DATA_ALT["response"]["vin"],
             "data": {
                 **percentages,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
                 Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
                 Signal.VERSION: "2025.1.1",
             },
@@ -349,7 +352,7 @@ async def test_update_streaming_scheduled_expiry_restarts(
             "data": {
                 Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
                 Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
                 Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
                 Signal.VERSION: "2025.1.1",
             },
@@ -382,6 +385,111 @@ async def test_update_streaming_scheduled_expiry_restarts(
     state = hass.states.get("update.test_update")
     assert state.attributes["in_progress"] is False
     assert state.attributes["update_percentage"] is None
+
+
+async def test_update_streaming_scheduled_replay_keeps_expiry(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a replayed schedule neither restarts the window nor re-latches."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    await setup_platform(hass, [Platform.UPDATE])
+    vin = VEHICLE_DATA_ALT["response"]["vin"]
+
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
+                Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
+                Signal.VERSION: "2025.1.1",
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is True
+
+    # A stream reconnect replays the cached value, inside the first window.
+    freezer.tick(timedelta(hours=36))
+    async_fire_time_changed(hass)
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is True
+
+    freezer.tick(timedelta(hours=13))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is False
+
+    # The cached value keeps replaying after the expiry.
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is False
+
+
+async def test_update_streaming_schedule_cleared_then_same_value(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+) -> None:
+    """Test a schedule after a clearing push latches even with the same value."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    await setup_platform(hass, [Platform.UPDATE])
+    vin = VEHICLE_DATA_ALT["response"]["vin"]
+
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
+                Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
+                Signal.VERSION: "2025.1.1",
+            },
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: None},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is False
+
+    mock_add_listener.send(
+        {
+            "vin": vin,
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("update.test_update")
+    assert state.attributes["in_progress"] is True
 
 
 async def test_update_streaming_restore(
@@ -469,6 +577,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
             },
             {
                 ATTR_SCHEDULED_AT: None,
+                ATTR_SCHEDULED_START: None,
                 ATTR_DOWNLOAD_PERCENTAGE: 42,
                 ATTR_INSTALL_PERCENTAGE: 0,
             },
@@ -486,6 +595,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
             },
             {
                 ATTR_SCHEDULED_AT: None,
+                ATTR_SCHEDULED_START: None,
                 ATTR_DOWNLOAD_PERCENTAGE: 100,
                 ATTR_INSTALL_PERCENTAGE: 50,
             },
@@ -503,6 +613,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
             },
             {
                 ATTR_SCHEDULED_AT: None,
+                ATTR_SCHEDULED_START: None,
                 ATTR_DOWNLOAD_PERCENTAGE: 100,
                 ATTR_INSTALL_PERCENTAGE: 50,
             },
@@ -520,6 +631,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
             },
             {
                 ATTR_SCHEDULED_AT: None,
+                ATTR_SCHEDULED_START: None,
                 ATTR_DOWNLOAD_PERCENTAGE: 42,
                 ATTR_INSTALL_PERCENTAGE: 0,
             },
@@ -550,6 +662,7 @@ async def test_update_streaming_restore_completed_not_in_progress(
             },
             {
                 ATTR_SCHEDULED_AT: None,
+                ATTR_SCHEDULED_START: None,
                 ATTR_DOWNLOAD_PERCENTAGE: None,
                 ATTR_INSTALL_PERCENTAGE: None,
             },
@@ -664,6 +777,7 @@ async def test_update_streaming_restore_current_schedule_expires(
                 ),
                 {
                     ATTR_SCHEDULED_AT: dt_util.utcnow().isoformat(),
+                    ATTR_SCHEDULED_START: SCHEDULED_START,
                     ATTR_DOWNLOAD_PERCENTAGE: download_percentage,
                     ATTR_INSTALL_PERCENTAGE: 0,
                 },
@@ -703,6 +817,7 @@ async def test_update_streaming_restore_current_schedule_expires(
                 ATTR_SCHEDULED_AT: (
                     dt_util.utcnow() - SCHEDULED_STALE_AFTER - timedelta(hours=1)
                 ).isoformat(),
+                ATTR_SCHEDULED_START: SCHEDULED_START,
                 ATTR_DOWNLOAD_PERCENTAGE: 0,
                 ATTR_INSTALL_PERCENTAGE: 0,
             },
@@ -750,6 +865,70 @@ async def test_update_streaming_restore_scheduled_stale(
     assert state.attributes["update_percentage"] is None
 
 
+@pytest.mark.parametrize(
+    ("age", "in_progress"),
+    [
+        pytest.param(timedelta(days=1), True, id="current"),
+        pytest.param(SCHEDULED_STALE_AFTER + timedelta(hours=1), False, id="expired"),
+    ],
+)
+async def test_update_streaming_restore_replayed_schedule(
+    hass: HomeAssistant,
+    mock_vehicle_data: AsyncMock,
+    mock_add_listener: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+    age: timedelta,
+    in_progress: bool,
+) -> None:
+    """Test a schedule replayed after a restart keeps its stored expiry."""
+
+    mock_vehicle_data.return_value = VEHICLE_DATA_ALT
+    entity_id = "update.test_update"
+    mock_restore_cache_with_extra_data(
+        hass,
+        (
+            (
+                State(
+                    entity_id,
+                    STATE_ON,
+                    attributes={
+                        "in_progress": True,
+                        "update_percentage": None,
+                        "installed_version": "2025.1.1",
+                        "latest_version": "2025.2.1",
+                    },
+                ),
+                {
+                    ATTR_SCHEDULED_AT: (dt_util.utcnow() - age).isoformat(),
+                    ATTR_SCHEDULED_START: SCHEDULED_START,
+                    ATTR_DOWNLOAD_PERCENTAGE: 0,
+                    ATTR_INSTALL_PERCENTAGE: 0,
+                },
+            ),
+        ),
+    )
+
+    await setup_platform(hass, [Platform.UPDATE])
+
+    mock_add_listener.send(
+        {
+            "vin": VEHICLE_DATA_ALT["response"]["vin"],
+            "data": {Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START},
+            "createdAt": "2024-10-04T10:45:17.537Z",
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state.attributes["in_progress"] is in_progress
+
+    # Past the stored deadline, inside a window restarted by the replay.
+    freezer.tick(timedelta(days=1, minutes=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state.attributes["in_progress"] is False
+
+
 async def test_update_streaming_extra_data_saved(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
@@ -769,7 +948,7 @@ async def test_update_streaming_extra_data_saved(
             "data": {
                 Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: 42,
                 Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: 0,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
             },
             "createdAt": "2024-10-04T10:45:17.537Z",
         }
@@ -784,6 +963,7 @@ async def test_update_streaming_extra_data_saved(
     )
     assert stored["extra_data"] == {
         ATTR_SCHEDULED_AT: "2025-01-01T00:00:00+00:00",
+        ATTR_SCHEDULED_START: SCHEDULED_START,
         ATTR_DOWNLOAD_PERCENTAGE: 42,
         ATTR_INSTALL_PERCENTAGE: 0,
     }
@@ -805,7 +985,7 @@ async def test_update_streaming_completed_while_scheduled(
             "data": {
                 Signal.SOFTWARE_UPDATE_DOWNLOAD_PERCENT_COMPLETE: None,
                 Signal.SOFTWARE_UPDATE_INSTALLATION_PERCENT_COMPLETE: None,
-                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: 1735689600,
+                Signal.SOFTWARE_UPDATE_SCHEDULED_START_TIME: SCHEDULED_START,
                 Signal.SOFTWARE_UPDATE_VERSION: "2025.2.1",
                 Signal.VERSION: "2025.1.1",
             },
