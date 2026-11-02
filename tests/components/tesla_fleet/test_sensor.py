@@ -89,6 +89,33 @@ async def test_sensors_restore(
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
+@pytest.mark.parametrize(
+    ("charging_state", "icon"),
+    [
+        ("Charging", "mdi:battery-charging-80"),
+        ("Stopped", None),
+        ("Disconnected", None),
+    ],
+)
+async def test_battery_level_charging_icon(
+    hass: HomeAssistant,
+    normal_config_entry: MockConfigEntry,
+    mock_vehicle_data: AsyncMock,
+    charging_state: str,
+    icon: str | None,
+) -> None:
+    """Test the battery level sensor shows a charging icon only while charging."""
+
+    data = deepcopy(VEHICLE_DATA)
+    data["response"]["charge_state"]["charging_state"] = charging_state
+    mock_vehicle_data.return_value = data
+    await setup_platform(hass, normal_config_entry, [Platform.SENSOR])
+
+    state = hass.states.get("sensor.test_battery_level")
+    assert state.state == "77"
+    assert state.attributes.get("icon") == icon
+
+
 async def test_charge_energy_reset(
     hass: HomeAssistant,
     normal_config_entry: MockConfigEntry,

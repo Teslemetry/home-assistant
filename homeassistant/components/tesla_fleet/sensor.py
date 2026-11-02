@@ -29,6 +29,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.icon import icon_for_battery_level
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 from homeassistant.util.variance import ignore_variance
@@ -48,6 +49,8 @@ PARALLEL_UPDATES = 0
 
 CHARGE_ENERGY_RESET_KEYS = frozenset({"charge_state_charge_energy_added"})
 CHARGE_ENERGY_RESET_THRESHOLD = 1.0  # kWh
+
+CHARGING_ICON_KEYS = frozenset({"charge_state_battery_level"})
 
 CHARGE_STATES = {
     "Starting": "starting",
@@ -551,6 +554,13 @@ class TeslaFleetVehicleSensorEntity(TeslaFleetVehicleEntity, RestoreSensor):
                     self._attr_last_reset = dt_util.utcnow()
                 self._previous_value = float(new_value)
             self._attr_native_value = new_value
+            if self.entity_description.key in CHARGING_ICON_KEYS:
+                self._attr_icon = (
+                    icon_for_battery_level(new_value, charging=True)
+                    if isinstance(new_value, int | float)
+                    and self.get("charge_state_charging_state") == "Charging"
+                    else None
+                )
         else:
             self._attr_native_value = None
 
