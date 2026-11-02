@@ -30,7 +30,7 @@
     'options': dict({
     }),
     'original_device_class': <NumberDeviceClass.BATTERY: 'battery'>,
-    'original_icon': 'mdi:battery-alert',
+    'original_icon': None,
     'original_name': 'Backup reserve',
     'platform': 'tessie',
     'previous_unique_id': None,
@@ -46,7 +46,6 @@
     'attributes': ReadOnlyDict({
       <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'battery',
       <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Energy Site Backup reserve',
-      <EntityStateAttribute.ICON: 'icon'>: 'mdi:battery-alert',
       <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
       <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
       <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.AUTO: 'auto'>,
@@ -92,7 +91,7 @@
     'options': dict({
     }),
     'original_device_class': <NumberDeviceClass.BATTERY: 'battery'>,
-    'original_icon': 'mdi:battery-unknown',
+    'original_icon': None,
     'original_name': 'Off-grid reserve',
     'platform': 'tessie',
     'previous_unique_id': None,
@@ -108,7 +107,6 @@
     'attributes': ReadOnlyDict({
       <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'battery',
       <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Energy Site Off-grid reserve',
-      <EntityStateAttribute.ICON: 'icon'>: 'mdi:battery-unknown',
       <NumberEntityCapabilityAttribute.MAX: 'max'>: 100,
       <NumberEntityCapabilityAttribute.MIN: 'min'>: 0,
       <NumberEntityCapabilityAttribute.MODE: 'mode'>: <NumberMode.AUTO: 'auto'>,
