@@ -446,6 +446,7 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
 
     async def _async_move(self, closed: bool) -> None:
         """Move the rear trunk to the requested position."""
+        self.raise_for_scope(Scope.VEHICLE_CMDS)
         # Vehicles without the command protocol report False, and None means unknown.
         # A Bluetooth paired vehicle always has it.
         directional = isinstance(self.api, VehicleRouter) or (
@@ -455,7 +456,6 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
             is True
         )
         if directional:
-            self.raise_for_scope(Scope.VEHICLE_CMDS)
             await handle_vehicle_command(
                 self.api.close_rear_trunk() if closed else self.api.open_rear_trunk()
             )
@@ -466,7 +466,6 @@ class TeslemetryRearTrunkEntity(TeslemetryRootEntity, CoverEntity):
                 translation_key="rear_trunk_state_unknown",
             )
         elif self.is_closed is not closed:
-            self.raise_for_scope(Scope.VEHICLE_CMDS)
             await handle_vehicle_command(self.api.actuate_trunk(Trunk.REAR))
         else:
             return
