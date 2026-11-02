@@ -563,6 +563,7 @@ class TeslaFleetVehicleSensorEntity(TeslaFleetVehicleEntity, RestoreSensor):
                 )
         else:
             self._attr_native_value = None
+            self._attr_icon = None
 
 
 class TeslaFleetVehicleTimeSensorEntity(TeslaFleetVehicleEntity, SensorEntity):

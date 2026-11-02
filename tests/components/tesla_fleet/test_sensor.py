@@ -116,6 +116,36 @@ async def test_battery_level_charging_icon(
     assert state.attributes.get("icon") == icon
 
 
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_battery_level_charging_icon_cleared(
+    hass: HomeAssistant,
+    normal_config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    mock_vehicle_data: AsyncMock,
+) -> None:
+    """Test the charging icon is cleared when the battery level goes missing."""
+
+    data = deepcopy(VEHICLE_DATA)
+    data["response"]["charge_state"]["charging_state"] = "Charging"
+    mock_vehicle_data.return_value = data
+    await setup_platform(hass, normal_config_entry, [Platform.SENSOR])
+
+    state = hass.states.get("sensor.test_battery_level")
+    assert state.attributes.get("icon") == "mdi:battery-charging-80"
+
+    data = deepcopy(data)
+    del data["response"]["charge_state"]["battery_level"]
+    mock_vehicle_data.return_value = data
+    freezer.tick(VEHICLE_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.test_battery_level")
+    assert state.state == STATE_UNKNOWN
+    assert state.attributes.get("icon") is None
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_charge_energy_reset(
     hass: HomeAssistant,
     normal_config_entry: MockConfigEntry,
