@@ -279,7 +279,7 @@ class TeslemetryEnergySiteLiveCoordinator(DataUpdateCoordinator[dict[str, Any]])
         self._local_poll_in_progress = True
         try:
             try:
-                self._local_live = (await local.live_status())["response"]
+                local_live = (await local.live_status())["response"]
             except PowerwallError as e:
                 self._local_live = None
                 LOGGER.log(
@@ -299,6 +299,11 @@ class TeslemetryEnergySiteLiveCoordinator(DataUpdateCoordinator[dict[str, Any]])
                         "Local live poll for %s recovered", self.api.energy_site_id
                     )
                 self._local_backoff_ticks = 1
+                # The gateway omits unmeasured AC-coupled solar, so its load can go
+                # negative; Tesla's cloud never reports a load below 0.
+                if (local_live.get("load_power") or 0) < 0:
+                    local_live = {**local_live, "load_power": 0}
+                self._local_live = local_live
             self.data = self._merged()
             # Not async_set_updated_data: availability stays with the stream.
             self.async_update_listeners()
