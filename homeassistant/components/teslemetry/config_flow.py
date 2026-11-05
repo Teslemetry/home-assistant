@@ -55,14 +55,18 @@ from homeassistant.components.bluetooth import (
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
+    SOURCE_USER,
     ConfigEntry,
     ConfigEntryState,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    FlowType,
+    SubentryFlowContext,
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_ADDRESS, CONF_HOST, CONF_PASSWORD
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -166,6 +170,24 @@ class OAuth2FlowHandler(
             title="Teslemetry",
             data=data,
         )
+
+    @override
+    async def async_on_create_entry(self, result: ConfigFlowResult) -> ConfigFlowResult:
+        """Offer local Powerwall, else Bluetooth vehicle, setup on the new entry."""
+        entry_id = result["result"].entry_id
+        for subentry_type in (SUBENTRY_TYPE_ENERGY_SITE, SUBENTRY_TYPE_VEHICLE):
+            subentry_result = await self.hass.config_entries.subentries.async_init(
+                (entry_id, subentry_type),
+                context=SubentryFlowContext(source=SOURCE_USER),
+            )
+            # A flow that aborted on its first step no longer exists to hand off to.
+            if subentry_result["type"] is FlowResultType.FORM:
+                result["next_flow"] = (
+                    FlowType.CONFIG_SUBENTRIES_FLOW,
+                    subentry_result["flow_id"],
+                )
+                break
+        return result
 
     def _async_apply_token(
         self, entry: ConfigEntry, data: dict[str, Any]

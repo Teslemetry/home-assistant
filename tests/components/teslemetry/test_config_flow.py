@@ -85,8 +85,10 @@ from homeassistant.components.teslemetry.coordinator import METADATA_INTERVAL
 from homeassistant.config_entries import (
     SOURCE_USER,
     ConfigEntryState,
+    ConfigFlowResult,
     ConfigSubentry,
     ConfigSubentryData,
+    FlowType,
     SubentryFlowResult,
 )
 from homeassistant.const import ATTR_ENTITY_ID, CONF_ADDRESS, CONF_HOST, CONF_PASSWORD
@@ -106,7 +108,6 @@ REDIRECT = "https://example.com/auth/external/callback"
 
 
 @pytest.mark.usefixtures("current_request_with_host")
-@pytest.mark.usefixtures("mock_setup_entry")
 async def test_oauth_flow(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
@@ -156,7 +157,9 @@ async def test_oauth_flow(
     )
 
     # Complete OAuth
-    result = await hass.config_entries.flow.async_configure(result["flow_id"])
+    with patch("homeassistant.components.teslemetry.PLATFORMS", []):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"])
+        await hass.async_block_till_done()
 
     assert result
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -167,6 +170,104 @@ async def test_oauth_flow(
     assert result["data"]["token"]["type"] == response["type"]
     assert result["data"]["token"]["expires_in"] == response["expires_in"]
     assert "expires_at" in result["result"].data["token"]
+
+
+async def _complete_oauth_flow(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+) -> ConfigFlowResult:
+    """Run the OAuth flow to entry creation, setting the new entry up for real."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    state = config_entry_oauth2_flow._encode_jwt(
+        hass,
+        {
+            "flow_id": result["flow_id"],
+            "redirect_uri": REDIRECT,
+        },
+    )
+    client = await hass_client_no_auth()
+    await client.get(f"/auth/external/callback?code=abcd&state={state}")
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(
+        TOKEN_URL,
+        json={
+            "refresh_token": "test_refresh_token",
+            "access_token": "test_access_token",
+            "type": "Bearer",
+            "expires_in": 60,
+        },
+    )
+    with patch("homeassistant.components.teslemetry.PLATFORMS", []):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"])
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].state is ConfigEntryState.LOADED
+    return result
+
+
+@pytest.fixture
+def mock_no_powerwall(mock_products: AsyncMock, mock_metadata: AsyncMock) -> None:
+    """Remove the account's only locally controllable energy site."""
+    products = deepcopy(PRODUCTS)
+    products["response"] = [
+        product
+        for product in products["response"]
+        if product.get("energy_site_id") != SITE_ID
+    ]
+    metadata = deepcopy(METADATA)
+    del metadata["energy_sites"][str(SITE_ID)]
+    mock_products.return_value = products
+    mock_metadata.return_value = metadata
+
+
+@pytest.mark.usefixtures("current_request_with_host", "enable_bluetooth")
+async def test_oauth_flow_offers_local_powerwall(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A new entry with a local-control site continues into the Powerwall flow."""
+    result = await _complete_oauth_flow(hass, hass_client_no_auth, aioclient_mock)
+
+    flow_type, flow_id = result["next_flow"]
+    assert flow_type is FlowType.CONFIG_SUBENTRIES_FLOW
+    flow = hass.config_entries.subentries.async_get(flow_id)
+    assert flow["handler"] == (result["result"].entry_id, SUBENTRY_TYPE_ENERGY_SITE)
+    assert flow["step_id"] == "user"
+
+
+@pytest.mark.usefixtures(
+    "current_request_with_host", "enable_bluetooth", "mock_no_powerwall"
+)
+async def test_oauth_flow_offers_bluetooth_vehicle(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Without a local-control site, a new entry continues into the vehicle flow."""
+    result = await _complete_oauth_flow(hass, hass_client_no_auth, aioclient_mock)
+
+    flow_type, flow_id = result["next_flow"]
+    assert flow_type is FlowType.CONFIG_SUBENTRIES_FLOW
+    flow = hass.config_entries.subentries.async_get(flow_id)
+    assert flow["handler"] == (result["result"].entry_id, SUBENTRY_TYPE_VEHICLE)
+    assert flow["step_id"] == "user"
+
+
+@pytest.mark.usefixtures("current_request_with_host", "mock_no_powerwall")
+async def test_oauth_flow_no_local_setup_available(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """With no local-control site and no Bluetooth, the flow just creates the entry."""
+    result = await _complete_oauth_flow(hass, hass_client_no_auth, aioclient_mock)
+
+    assert "next_flow" not in result
+    assert not hass.config_entries.subentries.async_progress()
 
 
 @pytest.mark.usefixtures("current_request_with_host")
