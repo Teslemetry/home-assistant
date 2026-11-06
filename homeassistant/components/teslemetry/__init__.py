@@ -110,6 +110,7 @@ from .helpers import (
     async_update_device_sw_version,
     create_powerwall_client,
     flatten,
+    gateway_issue_id,
 )
 from .models import (
     TeslemetryChargeOnSolarStore,
@@ -483,7 +484,7 @@ async def _async_resolve_local_control(
     subentry_id = _find_energy_subentry_id(entry, site_id)
     failed_issue_id = f"{ISSUE_LOCAL_CONTROL_FAILED}_{site_id}"
     if subentry_id is None:
-        ir.async_delete_issue(hass, DOMAIN, _gateway_issue_id(site_id))
+        ir.async_delete_issue(hass, DOMAIN, gateway_issue_id(site_id))
         ir.async_delete_issue(hass, DOMAIN, failed_issue_id)
         return True, None, cloud_energy_site
     # A local-gateway failure for one site must not tear down the integration.
@@ -511,15 +512,10 @@ async def _async_resolve_local_control(
             },
         )
         # Whether the gateway is found is unknown
-        ir.async_keep_issue(hass, DOMAIN, _gateway_issue_id(site_id))
+        ir.async_keep_issue(hass, DOMAIN, gateway_issue_id(site_id))
         return True, subentry_id, cloud_energy_site
     ir.async_delete_issue(hass, DOMAIN, failed_issue_id)
     return True, subentry_id, api
-
-
-def _gateway_issue_id(site_id: int) -> str:
-    """Return the repair issue id for a site whose local gateway was not found."""
-    return f"{ISSUE_GATEWAY_NOT_FOUND}_{site_id}"
 
 
 async def _async_resolve_energy_site_api(
@@ -546,7 +542,7 @@ async def _async_resolve_energy_site_api(
             err,
         )
         ir.async_delete_issue(
-            hass, DOMAIN, _gateway_issue_id(cloud_energy_site.energy_site_id)
+            hass, DOMAIN, gateway_issue_id(cloud_energy_site.energy_site_id)
         )
     except PowerwallError as err:
         # Another device may have taken the old address, so any refusal is a lead.
@@ -555,7 +551,7 @@ async def _async_resolve_energy_site_api(
         )
     else:
         ir.async_delete_issue(
-            hass, DOMAIN, _gateway_issue_id(cloud_energy_site.energy_site_id)
+            hass, DOMAIN, gateway_issue_id(cloud_energy_site.energy_site_id)
         )
     local_energy_site = PowerwallEnergySite(powerwall_client)
     return EnergySiteRouter(local_energy_site, cloud_energy_site)
@@ -572,7 +568,7 @@ async def _async_rediscover_gateway(
 ) -> PowerwallClient:
     """Return a client at the gateway's new address, or the stale client if not found."""
     site_id = cloud_energy_site.energy_site_id
-    issue_id = _gateway_issue_id(site_id)
+    issue_id = gateway_issue_id(site_id)
     try:
         host = await cloud_energy_site.find_gateway_address()
     except (ClientError, TeslaFleetError) as err:
@@ -613,8 +609,9 @@ async def _async_rediscover_gateway(
 
     LOGGER.warning(
         "Local gateway for energy site %s could not be found; "
-        "commands will fall back to cloud control",
+        "commands will fall back to cloud control: %s",
         site_id,
+        error,
     )
     ir.async_create_issue(
         hass,
