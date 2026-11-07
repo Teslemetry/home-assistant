@@ -24,7 +24,6 @@ from homeassistant.components.teslemetry.const import DOMAIN, ENERGY_HISTORY_FIE
 from homeassistant.components.teslemetry.coordinator import (
     LOCAL_COMPONENTS_INTERVAL,
     LOCAL_STATUS_INTERVAL,
-    VEHICLE_INTERVAL,
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
@@ -43,6 +42,7 @@ from . import (
     SITE_ID,
     assert_entities,
     assert_entities_alt,
+    refresh_entity,
     setup_paired_platform,
     setup_platform,
 )
@@ -207,9 +207,7 @@ async def test_sensors(
 
     # Coordinator refresh
     mock_vehicle_data.return_value = VEHICLE_DATA_ALT
-    freezer.tick(VEHICLE_INTERVAL)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await refresh_entity(hass, "sensor.test_battery_level")
 
     assert_entities_alt(hass, entry.entry_id, entity_registry, snapshot)
 
