@@ -3373,6 +3373,8 @@ _LOCAL_LIVE_STATUS = {
 # Expected entity states once _LOCAL_LIVE_STATUS is merged over the cloud fixture.
 _LOCAL_LIVE_STATES = {
     "sensor.energy_site_solar_power": "2.0",
+    "sensor.energy_site_energy_left": "20.0",
+    "sensor.energy_site_total_pack_energy": "40.0",
     "sensor.energy_site_percentage_charged": "80.0",
     "sensor.energy_site_battery_power": "3.0",
     "sensor.energy_site_load_power": "4.0",
@@ -3439,6 +3441,8 @@ async def test_paired_site_live_reads_merge_over_cloud(
 
     # Before the first LAN poll the merge base is the cloud cold read.
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    # The cloud does not report battery energy, so it waits for the gateway.
+    assert hass.states.get("sensor.energy_site_energy_left").state == STATE_UNKNOWN
 
     await _tick_local_live(hass, freezer, 1)
 
@@ -4176,6 +4180,8 @@ async def test_unpaired_site_reads_cloud_only(
     assert mock_powerwall_live_status.await_count == 0
     assert mock_powerwall_local_config.await_count == 0
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    assert hass.states.get("sensor.energy_site_energy_left") is None
+    assert hass.states.get("sensor.energy_site_total_pack_energy") is None
     assert (
         hass.states.get("select.energy_site_operation_mode").state == "self_consumption"
     )
