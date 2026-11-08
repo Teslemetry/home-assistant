@@ -12,11 +12,12 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity, EntityDescription
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CHARGE_LIMIT_SOC_KEY, DOMAIN
+from .const import CHARGE_LIMIT_SOC_KEY, CHARGE_ON_SOLAR_READ_SIGNAL, DOMAIN
 from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
@@ -417,6 +418,13 @@ class TeslemetryChargeOnSolarEntity(TeslemetryVehicleStreamEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                CHARGE_ON_SOLAR_READ_SIGNAL.format(self.vin),
+                self._async_handle_charge_on_solar_read,
+            )
+        )
         if self.vehicle.polls_charge_limit:
             self.async_on_remove(
                 self.vehicle.coordinator.async_add_listener(
@@ -431,6 +439,11 @@ class TeslemetryChargeOnSolarEntity(TeslemetryVehicleStreamEntity):
                 self._async_handle_charge_limit_soc
             )
         )
+
+    @callback
+    @abstractmethod
+    def _async_handle_charge_on_solar_read(self) -> None:
+        """Take the charge-on-solar settings read from the vehicle."""
 
     @callback
     def _async_handle_coordinator_update(self) -> None:

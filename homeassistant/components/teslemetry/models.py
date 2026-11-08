@@ -6,6 +6,7 @@ from typing import Any
 
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
+from tesla_fleet_api.exceptions import TeslaFleetError
 from tesla_fleet_api.router import VehicleRouter
 from tesla_fleet_api.tesla import EnergySiteRouter
 from tesla_fleet_api.tesla.vehicle.bluetooth import VehicleBluetooth
@@ -15,9 +16,15 @@ from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
-from .const import CHARGE_ON_SOLAR_LOWER_LIMIT_DEFAULT, DOMAIN
+from .const import (
+    CHARGE_ON_SOLAR_LOWER_LIMIT_DEFAULT,
+    CHARGE_ON_SOLAR_READ_SIGNAL,
+    DOMAIN,
+    LOGGER,
+)
 from .coordinator import (
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
@@ -84,6 +91,7 @@ class TeslemetryChargeOnSolarStore:
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialize the store."""
+        self._hass = hass
         self._store = Store[dict[str, dict[str, Any]]](
             hass, STORAGE_VERSION, f"{DOMAIN}.charge_on_solar.{entry_id}"
         )
@@ -110,6 +118,31 @@ class TeslemetryChargeOnSolarStore:
             return
         self._data[vehicle.vin] = settings
         self._store.async_delay_save(lambda: self._data)
+
+    async def async_read(self, vehicle: TeslemetryVehicleData) -> None:
+        """Replace a vehicle's settings with those read from it, keeping them on failure.
+
+        The read is a signed command that wakes a sleeping vehicle, so only call this
+        when the vehicle is known to be awake.
+        """
+        try:
+            # Only the cloud reply carries the settings as JSON, so bypass any Bluetooth router.
+            response = await vehicle.coordinator.api.get_charge_on_solar()
+        except TeslaFleetError as e:
+            LOGGER.debug(
+                "Reading charge-on-solar settings of %s failed: %s", vehicle.vin, e
+            )
+            return
+        settings = response["response"]
+        # A reply without the settings has only the generic command result.
+        if "enabled" not in settings:
+            return
+        vehicle.charge_on_solar_enabled = settings["enabled"]
+        vehicle.charge_on_solar_lower_limit = int(settings["lowerChargeLimit"])
+        self.async_save(vehicle)
+        async_dispatcher_send(
+            self._hass, CHARGE_ON_SOLAR_READ_SIGNAL.format(vehicle.vin)
+        )
 
     async def async_remove(self) -> None:
         """Remove the stored settings."""
