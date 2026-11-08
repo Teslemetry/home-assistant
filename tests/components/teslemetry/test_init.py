@@ -137,6 +137,7 @@ from .const import (
     CONFIG_V1,
     LIVE_STATUS,
     METADATA,
+    METADATA_LEGACY,
     METADATA_NOSCOPE,
     PRODUCTS,
     PRODUCTS_MODERN,
@@ -179,6 +180,7 @@ CONNECTION_ERRORS = [
 VEHICLE_ERRORS = [
     *ERRORS,
     (InsufficientCredits, ConfigEntryState.SETUP_RETRY),
+    (Forbidden, ConfigEntryState.SETUP_RETRY),
 ]
 
 
@@ -1253,6 +1255,47 @@ async def test_insufficient_credits_backs_off_polling(
     coordinator = entry.runtime_data.vehicles[0].coordinator
     assert isinstance(coordinator.last_exception, UpdateFailed)
     assert coordinator.last_exception.retry_after == INSUFFICIENT_CREDITS_RETRY_AFTER
+
+
+@pytest.mark.parametrize(
+    ("scopes", "reloads"),
+    [
+        pytest.param(METADATA_LEGACY["scopes"], 0, id="scopes_unchanged"),
+        pytest.param(METADATA_NOSCOPE["scopes"], 1, id="scopes_changed"),
+    ],
+)
+async def test_vehicle_data_missing_scopes(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_vehicle_data: AsyncMock,
+    mock_legacy: AsyncMock,
+    scopes: list[str],
+    reloads: int,
+) -> None:
+    """Missing scopes stop polling and reload only when the scopes changed."""
+    entry = await setup_platform(hass)
+    assert entry.state is ConfigEntryState.LOADED
+    assert mock_vehicle_data.call_count == 1
+
+    mock_vehicle_data.side_effect = Forbidden
+    mock_legacy.return_value = {**METADATA_LEGACY, "scopes": scopes}
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+        freezer.tick(VEHICLE_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        assert mock_vehicle_data.call_count == 2
+        assert mock_reload.call_count == reloads
+
+        # Polling stays stopped, so the error cannot trigger another reload.
+        freezer.tick(VEHICLE_INTERVAL * 2)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    assert mock_vehicle_data.call_count == 2
+    assert mock_reload.call_count == reloads
+    assert hass.states.get("sensor.test_battery_level").state == STATE_UNAVAILABLE
 
 
 def _oauth_session(hass: HomeAssistant, entry: MockConfigEntry) -> OAuth2Session:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, override
 from aiopowerwall import PowerwallClient, PowerwallEnergySite, PowerwallError
 from tesla_fleet_api.const import VehicleDataEndpoint
 from tesla_fleet_api.exceptions import (
+    Forbidden,
     GatewayTimeout,
     InsufficientCredits,
     InvalidResponse,
@@ -29,6 +30,7 @@ from tesla_fleet_api.router import (
 from tesla_fleet_api.teslemetry import EnergySite, Teslemetry, Vehicle
 from teslemetry_stream.const import EnergyTotalsEvent, WallConnectorTotalsEvent
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
@@ -179,6 +181,24 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_domain=DOMAIN,
                 translation_key="update_failed_insufficient_credits",
                 retry_after=INSUFFICIENT_CREDITS_RETRY_AFTER,
+            ) from e
+        except Forbidden as e:
+            # Polling cannot recover from missing scopes, only a reload can.
+            self.update_interval = None
+            # During setup there is no runtime data and a failed setup retries anyway.
+            if self.config_entry.state is ConfigEntryState.LOADED:
+                runtime_data = self.config_entry.runtime_data
+                await runtime_data.metadata_coordinator.async_refresh()
+                # Unchanged scopes would rebuild this coordinator only to fail again.
+                if set(runtime_data.metadata_coordinator.data["scopes"]) != set(
+                    runtime_data.scopes
+                ):
+                    self.hass.config_entries.async_schedule_reload(
+                        self.config_entry.entry_id
+                    )
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="update_failed_missing_scopes",
             ) from e
         except RETRY_EXCEPTIONS as e:
             raise UpdateFailed(
