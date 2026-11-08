@@ -1298,6 +1298,40 @@ async def test_vehicle_data_missing_scopes(
     assert hass.states.get("sensor.test_battery_level").state == STATE_UNAVAILABLE
 
 
+async def test_vehicle_data_missing_scopes_metadata_retry(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_vehicle_data: AsyncMock,
+    mock_legacy: AsyncMock,
+) -> None:
+    """A failed metadata refresh defers the scope check to the next one."""
+    entry = await setup_platform(hass)
+    assert entry.state is ConfigEntryState.LOADED
+
+    mock_vehicle_data.side_effect = Forbidden
+    mock_legacy.side_effect = TeslaFleetError
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+        freezer.tick(VEHICLE_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+        assert mock_vehicle_data.call_count == 2
+        mock_reload.assert_not_called()
+
+        mock_legacy.side_effect = None
+        mock_legacy.return_value = {
+            **METADATA_LEGACY,
+            "scopes": METADATA_NOSCOPE["scopes"],
+        }
+        freezer.tick(METADATA_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    mock_reload.assert_called_once_with(entry.entry_id)
+    assert mock_vehicle_data.call_count == 2
+
+
 def _oauth_session(hass: HomeAssistant, entry: MockConfigEntry) -> OAuth2Session:
     """Build an OAuth2Session for directly exercising _get_access_token."""
     return OAuth2Session(hass, entry, TeslemetryImplementation(hass, DOMAIN, CLIENT_ID))
