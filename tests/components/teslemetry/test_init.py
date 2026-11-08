@@ -137,7 +137,6 @@ from .const import (
     CONFIG_V1,
     LIVE_STATUS,
     METADATA,
-    METADATA_LEGACY,
     METADATA_NOSCOPE,
     PRODUCTS,
     PRODUCTS_MODERN,
@@ -1257,79 +1256,37 @@ async def test_insufficient_credits_backs_off_polling(
     assert coordinator.last_exception.retry_after == INSUFFICIENT_CREDITS_RETRY_AFTER
 
 
-@pytest.mark.parametrize(
-    ("scopes", "reloads"),
-    [
-        pytest.param(METADATA_LEGACY["scopes"], 0, id="scopes_unchanged"),
-        pytest.param(METADATA_NOSCOPE["scopes"], 1, id="scopes_changed"),
-    ],
-)
-async def test_vehicle_data_missing_scopes(
+async def test_vehicle_data_missing_scopes_repair(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
+    issue_registry: ir.IssueRegistry,
     mock_vehicle_data: AsyncMock,
     mock_legacy: AsyncMock,
-    scopes: list[str],
-    reloads: int,
 ) -> None:
-    """Missing scopes stop polling and reload only when the scopes changed."""
+    """Missing scopes raise a repair that clears once vehicle data is readable."""
     entry = await setup_platform(hass)
     assert entry.state is ConfigEntryState.LOADED
-    assert mock_vehicle_data.call_count == 1
+    issue_id = f"missing_scopes_{entry.entry_id}"
 
     mock_vehicle_data.side_effect = Forbidden
-    mock_legacy.return_value = {**METADATA_LEGACY, "scopes": scopes}
+    freezer.tick(VEHICLE_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
 
-    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
-        freezer.tick(VEHICLE_INTERVAL)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
-
-        assert mock_vehicle_data.call_count == 2
-        assert mock_reload.call_count == reloads
-
-        # Polling stays stopped, so the error cannot trigger another reload.
-        freezer.tick(VEHICLE_INTERVAL * 2)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
-
-    assert mock_vehicle_data.call_count == 2
-    assert mock_reload.call_count == reloads
+    assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get("sensor.test_battery_level").state == STATE_UNAVAILABLE
+    issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert (
+        issue.learn_more_url == "https://teslemetry.com/login?prompt_missing_scopes=1"
+    )
 
+    mock_vehicle_data.side_effect = None
+    freezer.tick(VEHICLE_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
 
-async def test_vehicle_data_missing_scopes_metadata_retry(
-    hass: HomeAssistant,
-    freezer: FrozenDateTimeFactory,
-    mock_vehicle_data: AsyncMock,
-    mock_legacy: AsyncMock,
-) -> None:
-    """A failed metadata refresh defers the scope check to the next one."""
-    entry = await setup_platform(hass)
-    assert entry.state is ConfigEntryState.LOADED
-
-    mock_vehicle_data.side_effect = Forbidden
-    mock_legacy.side_effect = TeslaFleetError
-
-    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
-        freezer.tick(VEHICLE_INTERVAL)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
-
-        assert mock_vehicle_data.call_count == 2
-        mock_reload.assert_not_called()
-
-        mock_legacy.side_effect = None
-        mock_legacy.return_value = {
-            **METADATA_LEGACY,
-            "scopes": METADATA_NOSCOPE["scopes"],
-        }
-        freezer.tick(METADATA_INTERVAL)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
-
-    mock_reload.assert_called_once_with(entry.entry_id)
-    assert mock_vehicle_data.call_count == 2
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
 def _oauth_session(hass: HomeAssistant, entry: MockConfigEntry) -> OAuth2Session:

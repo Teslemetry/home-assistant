@@ -30,8 +30,7 @@ from tesla_fleet_api.router import (
 from tesla_fleet_api.teslemetry import EnergySite, Teslemetry, Vehicle
 from teslemetry_stream.const import EnergyTotalsEvent, WallConnectorTotalsEvent
 
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
@@ -81,6 +80,11 @@ WALL_CONNECTOR_TOTALS = "totals"
 # Keys within tariff_content_v2 kept as nested dicts rather than flattened,
 # since entities and calendars read them as whole structures.
 TARIFF_SKIP_KEYS = ["daily_charges", "demand_charges", "energy_charges", "seasons"]
+
+# Teslemetry's reauth keeps a valid Tesla grant, so only a fresh Tesla login
+# that re-asks for declined scopes can restore them.
+ISSUE_MISSING_SCOPES = "missing_scopes"
+MISSING_SCOPES_URL = "https://teslemetry.com/login?prompt_missing_scopes=1"
 
 # Insufficient credits will not resolve themselves quickly, so back off polling
 # instead of hammering the API at the coordinator's normal interval.
@@ -168,7 +172,6 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.api = api
         self.vin = product["vin"]
         self.data = flatten(product)
-        self._awaiting_scope_change = False
 
     @override
     async def _async_update_data(self) -> dict[str, Any]:
@@ -184,23 +187,16 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 retry_after=INSUFFICIENT_CREDITS_RETRY_AFTER,
             ) from e
         except Forbidden as e:
-            # Polling cannot recover from missing scopes, only a reload can.
-            self.update_interval = None
-            # During setup there is no runtime data and a failed setup retries anyway.
-            if (
-                self.config_entry.state is ConfigEntryState.LOADED
-                and not self._awaiting_scope_change
-            ):
-                self._awaiting_scope_change = True
-                metadata_coordinator = (
-                    self.config_entry.runtime_data.metadata_coordinator
-                )
-                self.config_entry.async_on_unload(
-                    metadata_coordinator.async_add_listener(
-                        self._async_reload_on_scope_change
-                    )
-                )
-                await metadata_coordinator.async_refresh()
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"{ISSUE_MISSING_SCOPES}_{self.config_entry.entry_id}",
+                config_entry_id=self.config_entry.entry_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=ISSUE_MISSING_SCOPES,
+                learn_more_url=MISSING_SCOPES_URL,
+            )
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="update_failed_missing_scopes",
@@ -219,6 +215,9 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_placeholders={"message": e.message},
             ) from e
 
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_MISSING_SCOPES}_{self.config_entry.entry_id}"
+        )
         data = flatten(data)
         if version := data.get("vehicle_state_car_version"):
             # Consume firmware opportunistically rather than through a listener
@@ -228,17 +227,6 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.vin, self.config_entry.entry_id, version.split(" ")[0]
             )
         return data
-
-    @callback
-    def _async_reload_on_scope_change(self) -> None:
-        """Reload once metadata shows the scopes setup used have changed."""
-        runtime_data = self.config_entry.runtime_data
-        metadata_coordinator = runtime_data.metadata_coordinator
-        # Unchanged scopes would rebuild this coordinator only to fail again.
-        if metadata_coordinator.last_update_success and set(
-            metadata_coordinator.data["scopes"]
-        ) != set(runtime_data.scopes):
-            self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
 
 
 def _index_wall_connectors(data: dict[str, Any]) -> dict[str, Any]:
