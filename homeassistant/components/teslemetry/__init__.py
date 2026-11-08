@@ -633,6 +633,13 @@ async def _async_setup_charge_on_solar(
     ):
         store = TeslemetryChargeOnSolarStore(hass, entry.entry_id)
         await store.async_load(vehicles)
+        for vehicle in vehicles:
+            if vehicle.coordinator.data.get("state") == "online":
+                entry.async_create_background_task(
+                    hass,
+                    store.async_read(vehicle),
+                    f"Teslemetry charge-on-solar read {vehicle.vin}",
+                )
         return store
 
     entity_registry = er.async_get(hass)
