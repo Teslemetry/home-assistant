@@ -3442,7 +3442,7 @@ async def test_paired_site_live_reads_merge_over_cloud(
     # Before the first LAN poll the merge base is the cloud cold read.
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
     # The cloud does not report battery energy, so it waits for the gateway.
-    assert hass.states.get("sensor.energy_site_energy_left").state == STATE_UNKNOWN
+    assert hass.states.get("sensor.energy_site_energy_left").state == STATE_UNAVAILABLE
 
     await _tick_local_live(hass, freezer, 1)
 
@@ -4044,7 +4044,7 @@ async def test_paired_site_live_read_failure_falls_back_and_recovers(
     freezer: FrozenDateTimeFactory,
     mock_powerwall_live_status: AsyncMock,
 ) -> None:
-    """A failed local live poll shows cloud values (never unavailable) and recovers."""
+    """A failed local live poll falls back to cloud values and recovers."""
     mock_powerwall_live_status.side_effect = lambda: deepcopy(_LOCAL_LIVE_STATUS)
     entry = _entry_with_powerwall()
     await _setup_energy_site_entry(hass, entry, [Platform.SENSOR])
@@ -4057,6 +4057,8 @@ async def test_paired_site_live_read_failure_falls_back_and_recovers(
     await _tick_local_live(hass, freezer, 1)
     assert mock_powerwall_live_status.await_count == 2
     assert hass.states.get("sensor.energy_site_solar_power").state == "1.185"
+    # Only the gateway reports battery energy, so it has no cloud fallback.
+    assert hass.states.get("sensor.energy_site_energy_left").state == STATE_UNAVAILABLE
 
     # The next poll, backed off to two intervals, succeeds.
     mock_powerwall_live_status.side_effect = lambda: deepcopy(_LOCAL_LIVE_STATUS)
@@ -4064,6 +4066,7 @@ async def test_paired_site_live_read_failure_falls_back_and_recovers(
 
     assert mock_powerwall_live_status.await_count == 3
     assert hass.states.get("sensor.energy_site_solar_power").state == "2.0"
+    assert hass.states.get("sensor.energy_site_energy_left").state == "20.0"
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")

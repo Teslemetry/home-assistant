@@ -2055,7 +2055,11 @@ class TeslemetryEnergyLiveSensorEntity(TeslemetryEnergyLiveEntity, SensorEntity)
     @override
     def _async_update_attrs(self) -> None:
         """Update the attributes of the sensor."""
-        self._attr_available = not self.is_none
+        self._attr_available = (
+            self._value is not None
+            if self.entity_description.local_only
+            else not self.is_none
+        )
         self._attr_native_value = self.entity_description.value_fn(self._value)
 
 
