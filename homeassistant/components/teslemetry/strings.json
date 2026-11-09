@@ -429,6 +429,17 @@
             }
           }
         }
+      },
+      "passenger_temp": {
+        "name": "Passenger climate",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "split": "Split",
+              "sync": "Sync with driver"
+            }
+          }
+        }
       }
     },
     "cover": {
@@ -1341,6 +1352,9 @@
     },
     "command_reason": {
       "message": "Command was rejected: {reason}"
+    },
+    "driver_temperature_unknown": {
+      "message": "The driver temperature is not known yet, wait for the vehicle to report it and try again"
     },
     "local_command_failed": {
       "message": "The Powerwall gateway could not complete the command, check the logs for details"
