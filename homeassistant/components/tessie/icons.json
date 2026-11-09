@@ -104,6 +104,16 @@
       "climate_state_cabin_overheat_protection": {
         "default": "mdi:sun-thermometer"
       },
+      "passenger_temp": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "split": "mdi:link-variant-off",
+              "sync": "mdi:link-variant"
+            }
+          }
+        }
+      },
       "primary": {
         "state_attributes": {
           "preset_mode": {
