@@ -293,7 +293,7 @@ def _async_update_vehicle_repairs(
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                f"{issue_type}_{vin}",
+                f"{issue_type}_{entry.entry_id}_{vin}",
                 config_entry_id=entry.entry_id,
                 is_fixable=True,
                 severity=ir.IssueSeverity.WARNING,
@@ -485,8 +485,9 @@ async def _async_resolve_local_control(
         return False, None, cloud_energy_site
     subentry_id = _find_energy_subentry_id(entry, site_id)
     if subentry_id is None:
-        ir.async_delete_issue(hass, DOMAIN, gateway_issue_id(site_id))
-        ir.async_delete_issue(hass, DOMAIN, _gateway_mismatch_issue_id(site_id))
+        ir.async_delete_issue(
+            hass, DOMAIN, _gateway_mismatch_issue_id(entry.entry_id, site_id)
+        )
         return True, None, cloud_energy_site
     # A local-gateway failure for one site must not tear down the integration.
     try:
@@ -501,14 +502,14 @@ async def _async_resolve_local_control(
             exc_info=True,
         )
         # Whether the gateway is found is unknown
-        ir.async_keep_issue(hass, DOMAIN, gateway_issue_id(site_id))
+        ir.async_keep_issue(hass, DOMAIN, gateway_issue_id(entry.entry_id, site_id))
         return True, subentry_id, cloud_energy_site
     return True, subentry_id, api
 
 
-def _gateway_mismatch_issue_id(site_id: int) -> str:
+def _gateway_mismatch_issue_id(entry_id: str, site_id: int) -> str:
     """Return the repair issue id for a site whose address reaches another gateway."""
-    return f"{ISSUE_GATEWAY_MISMATCH}_{site_id}"
+    return f"{ISSUE_GATEWAY_MISMATCH}_{entry_id}_{site_id}"
 
 
 @callback
@@ -522,7 +523,7 @@ def _async_check_gateway_din(
     din: str | None,
 ) -> bool:
     """Return whether the connected gateway is the site's own, raising a repair if not."""
-    issue_id = _gateway_mismatch_issue_id(site_id)
+    issue_id = _gateway_mismatch_issue_id(entry.entry_id, site_id)
     if not expected_din:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return True
@@ -581,7 +582,9 @@ async def _async_resolve_energy_site_api(
             err,
         )
         ir.async_delete_issue(
-            hass, DOMAIN, gateway_issue_id(cloud_energy_site.energy_site_id)
+            hass,
+            DOMAIN,
+            gateway_issue_id(entry.entry_id, cloud_energy_site.energy_site_id),
         )
     except PowerwallError as err:
         # Another device may have taken the old address, so any refusal is a lead.
@@ -590,7 +593,9 @@ async def _async_resolve_energy_site_api(
         )
     else:
         ir.async_delete_issue(
-            hass, DOMAIN, gateway_issue_id(cloud_energy_site.energy_site_id)
+            hass,
+            DOMAIN,
+            gateway_issue_id(entry.entry_id, cloud_energy_site.energy_site_id),
         )
     site_id = cloud_energy_site.energy_site_id
     if not _async_check_gateway_din(
@@ -632,7 +637,7 @@ async def _async_rediscover_gateway(
 ) -> PowerwallClient:
     """Return a client at the gateway's new address, or the stale client if not found."""
     site_id = cloud_energy_site.energy_site_id
-    issue_id = gateway_issue_id(site_id)
+    issue_id = gateway_issue_id(entry.entry_id, site_id)
     try:
         host = await cloud_energy_site.find_gateway_address()
     except (ClientError, TeslaFleetError) as err:
@@ -682,6 +687,10 @@ async def _async_rediscover_gateway(
         DOMAIN,
         issue_id,
         config_entry_id=entry.entry_id,
+        # The subentry can be removed while the gateway lookup is awaited
+        config_subentry_id=(
+            subentry.subentry_id if subentry.subentry_id in entry.subentries else None
+        ),
         is_fixable=True,
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_GATEWAY_NOT_FOUND,
