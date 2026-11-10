@@ -1,14 +1,26 @@
 """Test the Teslemetry switch platform."""
 
-from copy import deepcopy
+from collections.abc import Generator
+from datetime import timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from bleak.exc import BleakError
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from pytest_homeassistant.common import async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 from syrupy.assertion import SnapshotAssertion
 from tesla_fleet_api.exceptions import InvalidCommand, InvalidRequest, TeslaFleetError
+from tesla_fleet_api.tesla.vehicle.bluetooth import VehicleBluetooth
+
+# pylint: disable-next=no-name-in-module
+from tesla_protocol.command.car_server_pb2 import (
+    ChargeOnSolarFeature,
+    GetChargeOnSolarFeatureResponse,
+)
+
+# pylint: disable-next=no-name-in-module
+from tesla_protocol.command.vcsec_pb2 import VehicleSleepStatus_E, VehicleStatus
 from teslemetry_stream import Signal
 
 from homeassistant.components.labs import async_update_preview_feature
@@ -43,11 +55,12 @@ from homeassistant.setup import async_setup_component
 from . import (
     assert_entities,
     assert_entities_alt,
+    mock_ble_config_entry,
     mock_config_entry,
     reload_platform,
     setup_platform,
 )
-from .const import COMMAND_ERRORS, COMMAND_OK, PRODUCTS, VEHICLE_DATA_ALT, VIN
+from .const import COMMAND_ERRORS, COMMAND_OK, VEHICLE_DATA_ALT, VIN
 
 
 async def _async_enable_charge_on_solar_preview_feature(hass: HomeAssistant) -> None:
@@ -666,25 +679,62 @@ async def test_charge_on_solar_switch_turn_on_omits_unknown_charge_limit(
             )
 
 
-CHARGE_ON_SOLAR_STORAGE = {
-    "version": 1,
-    "data": {VIN: {"enabled": True, "lower_limit": 20, "charge_limit_soc": 80}},
-}
-CHARGE_ON_SOLAR_READ = {
-    "response": {"enabled": False, "lowerChargeLimit": 30, "upperChargeLimit": 80}
-}
+SWITCH_CHARGE_ON_SOLAR = "switch.test_charge_on_solar"
+NUMBER_CHARGE_ON_SOLAR_LOWER_LIMIT = "number.test_charge_on_solar_lower_limit"
+AWAKE = VehicleStatus(
+    vehicleSleepStatus=VehicleSleepStatus_E.VEHICLE_SLEEP_STATUS_AWAKE
+)
+ASLEEP = VehicleStatus(
+    vehicleSleepStatus=VehicleSleepStatus_E.VEHICLE_SLEEP_STATUS_ASLEEP
+)
 
 
-async def _async_setup_charge_on_solar(
-    hass: HomeAssistant, hass_storage: dict[str, Any]
+def _charge_on_solar_reply(enabled: bool, lower_limit: float) -> dict[str, Any]:
+    """Return a Bluetooth charge-on-solar reply as the library delivers it."""
+    return {
+        "response": {
+            "result": True,
+            "reason": "",
+            "getChargeOnSolarFeatureResponse": GetChargeOnSolarFeatureResponse(
+                charge_on_solar=ChargeOnSolarFeature(
+                    enabled=enabled, lower_charge_limit=lower_limit
+                )
+            ),
+        }
+    }
+
+
+@pytest.fixture
+def mock_bluetooth_vehicle() -> Generator[tuple[AsyncMock, MagicMock]]:
+    """Back the paired vehicle with a Bluetooth double that is in range and awake."""
+    bluetooth_vehicle = AsyncMock(spec=VehicleBluetooth)
+    bluetooth_vehicle.vehicle_state.return_value = AWAKE
+    bluetooth_vehicle.get_charge_on_solar.return_value = _charge_on_solar_reply(
+        False, 30
+    )
+    ble_lookup = MagicMock(return_value=MagicMock())
+    with (
+        patch(
+            "homeassistant.components.teslemetry.async_ble_device_from_address",
+            ble_lookup,
+        ),
+        patch("homeassistant.components.teslemetry.helpers.TeslaBluetooth") as parent,
+    ):
+        parent.return_value.get_private_key = AsyncMock()
+        parent.return_value.vehicles.createBluetooth.return_value = bluetooth_vehicle
+        yield bluetooth_vehicle, ble_lookup
+
+
+async def _async_setup_stored_charge_on_solar(
+    hass: HomeAssistant, hass_storage: dict[str, Any], entry: MockConfigEntry
 ) -> None:
     """Set up the charge-on-solar entities with the feature stored as enabled."""
     await _async_enable_charge_on_solar_preview_feature(hass)
-    entry = mock_config_entry()
     entry.add_to_hass(hass)
-    hass_storage[f"{DOMAIN}.charge_on_solar.{entry.entry_id}"] = deepcopy(
-        CHARGE_ON_SOLAR_STORAGE
-    )
+    hass_storage[f"{DOMAIN}.charge_on_solar.{entry.entry_id}"] = {
+        "version": 1,
+        "data": {VIN: {"enabled": True, "lower_limit": 20, "charge_limit_soc": 80}},
+    }
     with patch(
         "homeassistant.components.teslemetry.PLATFORMS",
         [Platform.SWITCH, Platform.NUMBER],
@@ -693,119 +743,135 @@ async def _async_setup_charge_on_solar(
         await hass.async_block_till_done(wait_background_tasks=True)
 
 
-@pytest.mark.parametrize(
-    ("domain", "service", "service_data"),
-    [
-        pytest.param(
-            SWITCH_DOMAIN,
-            SERVICE_TURN_ON,
-            {ATTR_ENTITY_ID: "switch.test_charge_on_solar"},
-            id="switch",
-        ),
-        pytest.param(
-            NUMBER_DOMAIN,
-            SERVICE_SET_VALUE,
-            {ATTR_ENTITY_ID: "number.test_charge_on_solar_lower_limit", ATTR_VALUE: 40},
-            id="number",
-        ),
-    ],
-)
-async def test_charge_on_solar_command_reads_settings(
-    hass: HomeAssistant,
-    hass_storage: dict[str, Any],
-    domain: str,
-    service: str,
-    service_data: dict[str, Any],
+def _assert_charge_on_solar(
+    hass: HomeAssistant, switch_state: str, lower_limit: str
 ) -> None:
-    """Test a successful command is followed by reading the vehicle's own settings."""
-    await _async_setup_charge_on_solar(hass, hass_storage)
+    """Assert the charge-on-solar switch and lower limit number states."""
+    assert (switch := hass.states.get(SWITCH_CHARGE_ON_SOLAR)) is not None
+    assert switch.state == switch_state
+    assert (number := hass.states.get(NUMBER_CHARGE_ON_SOLAR_LOWER_LIMIT)) is not None
+    assert number.state == lower_limit
 
-    with (
-        patch(
-            "tesla_fleet_api.teslemetry.Vehicle.charge_on_solar",
-            return_value=COMMAND_OK,
-        ),
-        patch(
-            "tesla_fleet_api.teslemetry.Vehicle.get_charge_on_solar",
-            return_value=CHARGE_ON_SOLAR_READ,
-        ) as read,
-    ):
-        await hass.services.async_call(domain, service, service_data, blocking=True)
-    read.assert_called_once_with()
 
-    assert (switch := hass.states.get("switch.test_charge_on_solar")) is not None
-    assert switch.state == STATE_OFF
-    assert (number := hass.states.get("number.test_charge_on_solar_lower_limit"))
-    assert number.state == "30"
+async def test_charge_on_solar_bluetooth_read(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    mock_bluetooth_vehicle: tuple[AsyncMock, MagicMock],
+) -> None:
+    """Test the settings are read over Bluetooth at setup and take over the stored ones."""
+    bluetooth_vehicle, _ = mock_bluetooth_vehicle
+
+    await _async_setup_stored_charge_on_solar(
+        hass, hass_storage, mock_ble_config_entry()
+    )
+
+    bluetooth_vehicle.get_charge_on_solar.assert_called_once_with()
+    _assert_charge_on_solar(hass, STATE_OFF, "30")
 
 
 @pytest.mark.parametrize(
-    "read",
+    ("in_range", "vehicle_state", "read", "read_count"),
     [
-        pytest.param({"side_effect": TeslaFleetError}, id="error"),
-        pytest.param({"return_value": COMMAND_OK}, id="no_settings"),
+        pytest.param(False, {"return_value": AWAKE}, {}, 0, id="out_of_range"),
+        pytest.param(True, {"return_value": ASLEEP}, {}, 0, id="asleep"),
+        pytest.param(
+            True,
+            {"return_value": {"response": {"result": False, "reason": "error"}}},
+            {},
+            0,
+            id="vcsec_error",
+        ),
+        pytest.param(True, {"side_effect": BleakError}, {}, 0, id="state_error"),
+        pytest.param(
+            True, {"return_value": AWAKE}, {"side_effect": TimeoutError}, 1, id="error"
+        ),
+        pytest.param(
+            True,
+            {"return_value": AWAKE},
+            {"return_value": {"response": {"result": False, "reason": ""}}},
+            1,
+            id="no_settings",
+        ),
     ],
 )
-async def test_charge_on_solar_command_keeps_settings_without_read(
+async def test_charge_on_solar_bluetooth_read_keeps_settings(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
+    mock_bluetooth_vehicle: tuple[AsyncMock, MagicMock],
+    in_range: bool,
+    vehicle_state: dict[str, Any],
     read: dict[str, Any],
+    read_count: int,
 ) -> None:
-    """Test the sent settings are kept when the vehicle's own cannot be read."""
-    await _async_setup_charge_on_solar(hass, hass_storage)
+    """Test the stored settings are kept, never woken for, when Bluetooth cannot read them."""
+    bluetooth_vehicle, ble_lookup = mock_bluetooth_vehicle
+    ble_lookup.return_value = MagicMock() if in_range else None
+    bluetooth_vehicle.vehicle_state.configure_mock(**vehicle_state)
+    bluetooth_vehicle.get_charge_on_solar.configure_mock(**read)
 
-    with (
-        patch(
-            "tesla_fleet_api.teslemetry.Vehicle.charge_on_solar",
-            return_value=COMMAND_OK,
-        ),
-        patch("tesla_fleet_api.teslemetry.Vehicle.get_charge_on_solar", **read),
-    ):
-        await hass.services.async_call(
-            NUMBER_DOMAIN,
-            SERVICE_SET_VALUE,
-            {ATTR_ENTITY_ID: "number.test_charge_on_solar_lower_limit", ATTR_VALUE: 40},
-            blocking=True,
-        )
+    await _async_setup_stored_charge_on_solar(
+        hass, hass_storage, mock_ble_config_entry()
+    )
 
-    assert (switch := hass.states.get("switch.test_charge_on_solar")) is not None
-    assert switch.state == STATE_ON
-    assert (number := hass.states.get("number.test_charge_on_solar_lower_limit"))
-    assert number.state == "40"
+    assert bluetooth_vehicle.get_charge_on_solar.call_count == read_count
+    bluetooth_vehicle.wake_up.assert_not_called()
+    _assert_charge_on_solar(hass, STATE_ON, "20")
 
 
-@pytest.mark.parametrize(
-    ("vehicle_state", "read_count", "expected_state", "expected_lower_limit"),
-    [
-        pytest.param("online", 1, STATE_OFF, "30", id="online"),
-        pytest.param("asleep", 0, STATE_ON, "20", id="asleep"),
-    ],
-)
-async def test_charge_on_solar_setup_reads_settings_only_when_online(
+async def test_charge_on_solar_bluetooth_read_interval(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
-    mock_products: AsyncMock,
-    vehicle_state: str,
-    read_count: int,
-    expected_state: str,
-    expected_lower_limit: str,
+    freezer: FrozenDateTimeFactory,
+    mock_bluetooth_vehicle: tuple[AsyncMock, MagicMock],
 ) -> None:
-    """Test setup reads the vehicle's settings only when that cannot wake it."""
-    products = deepcopy(PRODUCTS)
-    products["response"][0]["state"] = vehicle_state
-    mock_products.return_value = products
+    """Test the settings are read over Bluetooth again every 20 minutes."""
+    bluetooth_vehicle, _ = mock_bluetooth_vehicle
+    await _async_setup_stored_charge_on_solar(
+        hass, hass_storage, mock_ble_config_entry()
+    )
+    bluetooth_vehicle.get_charge_on_solar.return_value = _charge_on_solar_reply(
+        True, 45
+    )
 
-    with patch(
-        "tesla_fleet_api.teslemetry.Vehicle.get_charge_on_solar",
-        return_value=CHARGE_ON_SOLAR_READ,
-    ) as read:
-        await _async_setup_charge_on_solar(hass, hass_storage)
-    assert read.call_count == read_count
+    freezer.tick(timedelta(minutes=19))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert bluetooth_vehicle.get_charge_on_solar.call_count == 1
+    _assert_charge_on_solar(hass, STATE_OFF, "30")
 
-    assert (switch := hass.states.get("switch.test_charge_on_solar")) is not None
-    assert switch.state == expected_state
-    assert (number := hass.states.get("number.test_charge_on_solar_lower_limit"))
-    assert number.state == expected_lower_limit
+    freezer.tick(timedelta(minutes=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert bluetooth_vehicle.get_charge_on_solar.call_count == 2
+    _assert_charge_on_solar(hass, STATE_ON, "45")
+
+
+async def test_charge_on_solar_never_read_over_cloud(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Test a vehicle without Bluetooth never pays for a cloud read of the settings."""
+    with patch("tesla_fleet_api.teslemetry.Vehicle.get_charge_on_solar") as cloud_read:
+        await _async_setup_stored_charge_on_solar(
+            hass, hass_storage, mock_config_entry()
+        )
+        with patch(
+            "tesla_fleet_api.teslemetry.Vehicle.charge_on_solar",
+            return_value=COMMAND_OK,
+        ):
+            await hass.services.async_call(
+                SWITCH_DOMAIN,
+                SERVICE_TURN_OFF,
+                {ATTR_ENTITY_ID: SWITCH_CHARGE_ON_SOLAR},
+                blocking=True,
+            )
+        freezer.tick(timedelta(hours=1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    cloud_read.assert_not_called()
+    _assert_charge_on_solar(hass, STATE_OFF, "20")
 
 
 async def test_disable_charge_on_solar_preview_removes_registry_entries(
