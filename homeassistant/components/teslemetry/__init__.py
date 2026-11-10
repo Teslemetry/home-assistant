@@ -236,8 +236,19 @@ def _setup_dynamic_discovery(
     metadata_coordinator: TeslemetryMetadataCoordinator,
     known_vins: set[str],
     known_site_ids: set[str],
+    energysites: list[TeslemetryEnergyData],
 ) -> None:
     """Set up dynamic device discovery via reload when subscriptions change."""
+
+    def _signed_site_ids(data: dict[str, Any]) -> set[int]:
+        """Return the energy sites signed commands can reach."""
+        return {
+            energysite.id
+            for energysite in energysites
+            if energysite.signed_commands_available(data)
+        }
+
+    known_signed_site_ids = _signed_site_ids(metadata_coordinator.data)
 
     @callback
     def _handle_metadata_update() -> None:
@@ -263,6 +274,13 @@ def _setup_dynamic_discovery(
                 removed_vins or "none",
                 added_sites or "none",
                 removed_sites or "none",
+            )
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+        elif _signed_site_ids(data) != known_signed_site_ids:
+            # Entities for commands Teslemetry signs exist only while it can send them.
+            LOGGER.info(
+                "Teslemetry pairing with an energy gateway changed, "
+                "reloading integration"
             )
             hass.config_entries.async_schedule_reload(entry.entry_id)
 
@@ -1040,6 +1058,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TeslemetryConfigEntry) -
         metadata_coordinator,
         known_vins,
         known_site_ids,
+        energysites,
     )
 
     _setup_vehicle_repairs(

@@ -23,7 +23,10 @@ from homeassistant.components.teslemetry.const import (
     DOMAIN,
     LABS_CHARGE_ON_SOLAR_FEATURE,
 )
-from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
+from homeassistant.components.teslemetry.coordinator import (
+    METADATA_INTERVAL,
+    VEHICLE_INTERVAL,
+)
 from homeassistant.components.teslemetry.number import (
     TeslemetryChargeOnSolarLowerLimitNumberEntity,
 )
@@ -33,11 +36,19 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
-from . import assert_entities, mock_config_entry, reload_platform, setup_platform
+from . import (
+    assert_entities,
+    mock_config_entry,
+    reload_platform,
+    setup_paired_platform,
+    setup_platform,
+)
 from .const import (
     COMMAND_ERRORS,
     COMMAND_OK,
+    METADATA,
     METADATA_NOSCOPE,
+    SITE_INFO,
     VEHICLE_DATA,
     VEHICLE_DATA_ALT,
     VIN,
@@ -48,6 +59,14 @@ async def _async_enable_charge_on_solar_preview_feature(hass: HomeAssistant) -> 
     """Enable the Teslemetry charge-on-solar preview feature."""
     assert await async_setup_component(hass, "labs", {})
     await async_update_preview_feature(hass, DOMAIN, LABS_CHARGE_ON_SOLAR_FEATURE, True)
+
+
+SITE_ID = 123456
+GRID_LIMIT_ENTITY_IDS = (
+    "number.energy_site_grid_export_limit",
+    "number.energy_site_grid_import_limit",
+    "switch.energy_site_solar_curtailment",
+)
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -958,3 +977,109 @@ async def test_charge_on_solar_unknown_polled_charge_limit(
             lower_charge_limit=20,
             upper_charge_limit=None,
         )
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "method", "value", "expected_state"),
+    [
+        pytest.param(
+            "number.energy_site_grid_export_limit",
+            "set_export_limit",
+            5.5,
+            "5.5",
+            id="export",
+        ),
+        pytest.param(
+            "number.energy_site_grid_import_limit",
+            "set_import_limit",
+            14,
+            "14.0",
+            id="import",
+        ),
+    ],
+)
+async def test_grid_limit_number_cloud(
+    hass: HomeAssistant,
+    entity_id: str,
+    method: str,
+    value: float,
+    expected_state: str,
+) -> None:
+    """Test a grid limit is sent through Teslemetry for a paired site."""
+    await setup_platform(hass, [Platform.NUMBER])
+
+    with patch(
+        f"tesla_fleet_api.teslemetry.EnergySite.{method}",
+        return_value=COMMAND_OK,
+    ) as call:
+        await hass.services.async_call(
+            NUMBER_DOMAIN,
+            SERVICE_SET_VALUE,
+            {ATTR_ENTITY_ID: entity_id, ATTR_VALUE: value},
+            blocking=True,
+        )
+    call.assert_awaited_once_with(value)
+    assert hass.states.get(entity_id).state == expected_state
+
+
+async def test_grid_limit_number_value_from_site_info(
+    hass: HomeAssistant, mock_site_info: AsyncMock
+) -> None:
+    """Test the grid limits show the site_info limits as positive kW."""
+    site_info = deepcopy(SITE_INFO)
+    site_info["response"]["min_site_meter_power_ac"] = -5
+    site_info["response"]["max_site_meter_power_ac"] = 14
+    mock_site_info.side_effect = None
+    mock_site_info.return_value = site_info
+    await setup_platform(hass, [Platform.NUMBER])
+
+    assert hass.states.get("number.energy_site_grid_export_limit").state == "5"
+    assert hass.states.get("number.energy_site_grid_import_limit").state == "14"
+
+
+@pytest.mark.parametrize(
+    ("subentries", "paired", "created"),
+    [
+        pytest.param(True, False, True, id="local_only"),
+        pytest.param(False, True, True, id="paired_only"),
+        pytest.param(True, True, True, id="local_and_paired"),
+        pytest.param(False, False, False, id="neither"),
+        pytest.param(False, None, False, id="unknown"),
+    ],
+)
+async def test_grid_limit_entities_need_signed_commands(
+    hass: HomeAssistant,
+    subentries: bool,
+    paired: bool | None,
+    created: bool,
+) -> None:
+    """Test grid limit entities exist only when Teslemetry or the local gateway can send them."""
+    metadata = deepcopy(METADATA)
+    metadata["energy_sites"][str(SITE_ID)]["paired"] = paired
+    platforms = [Platform.NUMBER, Platform.SWITCH]
+    with patch("tesla_fleet_api.teslemetry.Teslemetry.metadata", return_value=metadata):
+        if subentries:
+            await setup_paired_platform(hass, platforms)
+        else:
+            await setup_platform(hass, platforms)
+
+    for entity_id in GRID_LIMIT_ENTITY_IDS:
+        assert (hass.states.get(entity_id) is not None) is created
+
+
+async def test_grid_limit_entities_follow_pairing(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Test the entry reloads to add grid limit entities once Teslemetry is paired."""
+    metadata = deepcopy(METADATA)
+    metadata["energy_sites"][str(SITE_ID)]["paired"] = False
+    with patch("tesla_fleet_api.teslemetry.Teslemetry.metadata", return_value=metadata):
+        await setup_platform(hass, [Platform.NUMBER, Platform.SWITCH])
+    assert hass.states.get("number.energy_site_grid_export_limit") is None
+
+    with patch("homeassistant.components.teslemetry.PLATFORMS", [Platform.NUMBER]):
+        freezer.tick(METADATA_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert hass.states.get("number.energy_site_grid_export_limit") is not None

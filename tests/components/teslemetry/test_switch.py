@@ -26,7 +26,13 @@ from homeassistant.components.teslemetry.const import (
     LABS_CHARGE_ON_SOLAR_FEATURE,
 )
 from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
-from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON, Platform
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNKNOWN,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -674,3 +680,40 @@ async def test_disable_charge_on_solar_preview_removes_registry_entries(
     await reload_platform(hass, entry, [Platform.SWITCH])
 
     assert entity_registry.async_get("switch.test_charge_on_solar") is None
+
+
+SOLAR_CURTAILMENT_ENTITY_ID = "switch.energy_site_solar_curtailment"
+
+
+async def test_solar_curtailment_switch_unknown_from_cloud(hass: HomeAssistant) -> None:
+    """Test solar curtailment is unknown when only cloud site_info reports the site."""
+    await setup_platform(hass, [Platform.SWITCH])
+
+    assert hass.states.get(SOLAR_CURTAILMENT_ENTITY_ID).state == STATE_UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("service", "enabled", "expected_state"),
+    [
+        pytest.param(SERVICE_TURN_ON, True, STATE_ON, id="turn_on"),
+        pytest.param(SERVICE_TURN_OFF, False, STATE_OFF, id="turn_off"),
+    ],
+)
+async def test_solar_curtailment_switch_cloud(
+    hass: HomeAssistant, service: str, enabled: bool, expected_state: str
+) -> None:
+    """Test solar curtailment is sent through Teslemetry for a paired site."""
+    await setup_platform(hass, [Platform.SWITCH])
+
+    with patch(
+        "tesla_fleet_api.teslemetry.EnergySite.set_on_grid_solar_curtailment",
+        return_value=COMMAND_OK,
+    ) as call:
+        await hass.services.async_call(
+            SWITCH_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: SOLAR_CURTAILMENT_ENTITY_ID},
+            blocking=True,
+        )
+    call.assert_awaited_once_with(enabled)
+    assert hass.states.get(SOLAR_CURTAILMENT_ENTITY_ID).state == expected_state
