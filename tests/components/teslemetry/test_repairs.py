@@ -655,13 +655,13 @@ async def test_energy_site_repair_issue_created(
     assert issue.translation_key == "energy_site_not_paired"
     assert issue.translation_placeholders == {
         "site": "Energy Site",
-        "link": f"https://teslemetry.com/console/energy/{SITE_ID}",
+        "link": f"https://teslemetry.com/console/energy/{SITE_ID}/setup",
     }
     assert issue.data == {
         "entry_id": entry.entry_id,
         "site_id": SITE_ID,
         "site": "Energy Site",
-        "link": f"https://teslemetry.com/console/energy/{SITE_ID}",
+        "link": f"https://teslemetry.com/console/energy/{SITE_ID}/setup",
     }
 
 
@@ -771,7 +771,7 @@ async def test_energy_site_repair_fix_flow(
     assert result["step_id"] == "confirm"
     assert result["description_placeholders"] == {
         "site": "Energy Site",
-        "link": f"https://teslemetry.com/console/energy/{SITE_ID}",
+        "link": f"https://teslemetry.com/console/energy/{SITE_ID}/setup",
     }
 
     with patch(

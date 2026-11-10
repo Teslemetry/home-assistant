@@ -357,7 +357,7 @@ def _setup_energy_site_repairs(
                     continue
                 placeholders = {
                     "site": energysite.device["name"],
-                    "link": energysite.device["configuration_url"],
+                    "link": f"{energysite.device['configuration_url']}/setup",
                 }
                 ir.async_create_issue(
                     hass,
