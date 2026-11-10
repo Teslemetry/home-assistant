@@ -39,11 +39,11 @@ rules:
   devices: done
   diagnostics: done
   discovery:
-    status: exempt
-    comment: Cloud polling integration
+    status: done
+    comment: Powerwall gateways on a loaded account are discovered by DHCP
   discovery-update-info:
     status: exempt
-    comment: Cloud polling integration
+    comment: A changed gateway address is healed by a repair that looks it up via the cloud
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
