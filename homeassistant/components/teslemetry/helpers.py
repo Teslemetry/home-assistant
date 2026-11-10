@@ -5,16 +5,16 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from aiohttp import ClientError
-from aiopowerwall import (
+from tesla_fleet_api.exceptions import TeslaFleetError
+from tesla_fleet_api.tesla import EnergySiteRouter
+from tesla_fleet_api.tesla.bluetooth import TeslaBluetooth
+from tesla_fleet_api.tesla.powerwall import (
     PowerwallAuthenticationError,
     PowerwallClient,
     PowerwallCommandError,
     PowerwallError,
     PowerwallNotSupportedError,
 )
-from tesla_fleet_api.exceptions import TeslaFleetError
-from tesla_fleet_api.tesla import EnergySiteRouter
-from tesla_fleet_api.tesla.bluetooth import TeslaBluetooth
 from tesla_fleet_api.teslemetry import EnergySite, Vehicle
 from tesla_fleet_api.teslemetry.energysite import TeslemetryEnergySite
 
@@ -169,6 +169,16 @@ async def handle_energy_site_command(
             translation_domain=DOMAIN,
             translation_key="local_command_failed",
         ) from e
+
+
+async def handle_config_json_command(command: Awaitable[dict[str, Any]]) -> None:
+    """Handle a gateway config.json write, which is not applied if the file changed meanwhile."""
+    result = await handle_energy_site_command(command)
+    if not result["response"]["applied"]:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="config_not_applied",
+        )
 
 
 async def handle_vehicle_command(command: Awaitable[dict[str, Any]]) -> Any:

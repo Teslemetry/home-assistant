@@ -491,6 +491,12 @@
       "charge_state_charge_limit_soc": {
         "name": "Charge limit"
       },
+      "max_site_meter_power_ac": {
+        "name": "Grid import limit"
+      },
+      "min_site_meter_power_ac": {
+        "name": "Grid export limit"
+      },
       "off_grid_vehicle_charging_reserve_percent": {
         "name": "Off-grid reserve"
       }
@@ -1292,6 +1298,9 @@
       "guest_mode_enabled": {
         "name": "Guest mode"
       },
+      "on_grid_solar_curtailment_enabled": {
+        "name": "Solar curtailment"
+      },
       "user_settings_storm_mode_enabled": {
         "name": "Storm watch"
       },
@@ -1341,6 +1350,9 @@
     },
     "command_reason": {
       "message": "Command was rejected: {reason}"
+    },
+    "config_not_applied": {
+      "message": "The Powerwall gateway configuration changed while the setting was being saved, try again"
     },
     "energy_site_not_paired": {
       "message": "Teslemetry is not paired with the Powerwall system for {site}, pair it in the Teslemetry console or set up local control"
