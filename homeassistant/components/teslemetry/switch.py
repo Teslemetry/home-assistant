@@ -33,7 +33,7 @@ from .entity import (
 from .helpers import (
     async_set_charge_on_solar,
     handle_command,
-    handle_energy_site_command,
+    handle_config_json_command,
     handle_vehicle_command,
 )
 from .models import TeslemetryEnergyData, TeslemetryVehicleData
@@ -442,7 +442,7 @@ class TeslemetryOnGridSolarCurtailmentSwitchEntity(
     async def _async_set_curtailment(self, enabled: bool) -> None:
         """Allow or stop on-grid solar curtailment."""
         self.raise_for_scope(Scope.ENERGY_CMDS)
-        await handle_energy_site_command(
+        await handle_config_json_command(
             self.api.set_on_grid_solar_curtailment(enabled)
         )
         self._attr_is_on = enabled

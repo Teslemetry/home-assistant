@@ -25,7 +25,10 @@ from homeassistant.components.teslemetry.const import (
     DOMAIN,
     LABS_CHARGE_ON_SOLAR_FEATURE,
 )
-from homeassistant.components.teslemetry.coordinator import VEHICLE_INTERVAL
+from homeassistant.components.teslemetry.coordinator import (
+    ENERGY_CONFIG_INTERVAL,
+    VEHICLE_INTERVAL,
+)
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     STATE_OFF,
@@ -43,9 +46,16 @@ from . import (
     assert_entities_alt,
     mock_config_entry,
     reload_platform,
+    setup_paired_platform,
     setup_platform,
 )
-from .const import COMMAND_ERRORS, COMMAND_OK, VEHICLE_DATA_ALT, VIN
+from .const import (
+    COMMAND_ERRORS,
+    COMMAND_OK,
+    CONFIG_JSON_APPLIED,
+    VEHICLE_DATA_ALT,
+    VIN,
+)
 
 
 async def _async_enable_charge_on_solar_preview_feature(hass: HomeAssistant) -> None:
@@ -707,7 +717,7 @@ async def test_solar_curtailment_switch_cloud(
 
     with patch(
         "tesla_fleet_api.teslemetry.EnergySite.set_on_grid_solar_curtailment",
-        return_value=COMMAND_OK,
+        return_value=CONFIG_JSON_APPLIED,
     ) as call:
         await hass.services.async_call(
             SWITCH_DOMAIN,
@@ -716,4 +726,61 @@ async def test_solar_curtailment_switch_cloud(
             blocking=True,
         )
     call.assert_awaited_once_with(enabled)
+    assert hass.states.get(SOLAR_CURTAILMENT_ENTITY_ID).state == expected_state
+
+
+@pytest.mark.parametrize(
+    ("service", "enabled", "expected_state"),
+    [
+        pytest.param(SERVICE_TURN_ON, True, STATE_ON, id="turn_on"),
+        pytest.param(SERVICE_TURN_OFF, False, STATE_OFF, id="turn_off"),
+    ],
+)
+async def test_solar_curtailment_switch_local(
+    hass: HomeAssistant, service: str, enabled: bool, expected_state: str
+) -> None:
+    """Test solar curtailment is sent to the local gateway of a site with local control."""
+    await setup_paired_platform(hass, [Platform.SWITCH])
+
+    with (
+        patch(
+            "tesla_fleet_api.tesla.powerwall.PowerwallEnergySite.set_on_grid_solar_curtailment",
+            return_value=CONFIG_JSON_APPLIED,
+        ) as local,
+        patch(
+            "tesla_fleet_api.teslemetry.EnergySite.set_on_grid_solar_curtailment"
+        ) as cloud,
+    ):
+        await hass.services.async_call(
+            SWITCH_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: SOLAR_CURTAILMENT_ENTITY_ID},
+            blocking=True,
+        )
+    local.assert_awaited_once_with(enabled)
+    cloud.assert_not_called()
+    assert hass.states.get(SOLAR_CURTAILMENT_ENTITY_ID).state == expected_state
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected_state"),
+    [pytest.param(True, STATE_ON, id="on"), pytest.param(False, STATE_OFF, id="off")],
+)
+async def test_solar_curtailment_switch_from_local_config(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_powerwall_local_config: AsyncMock,
+    enabled: bool,
+    expected_state: str,
+) -> None:
+    """Test solar curtailment follows the local gateway's config.json."""
+    mock_powerwall_local_config.return_value = {
+        "on_grid_solar_curtailment_enabled": enabled
+    }
+    await setup_paired_platform(hass, [Platform.SWITCH])
+
+    freezer.tick(ENERGY_CONFIG_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
     assert hass.states.get(SOLAR_CURTAILMENT_ENTITY_ID).state == expected_state

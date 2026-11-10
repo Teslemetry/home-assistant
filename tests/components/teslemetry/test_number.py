@@ -24,6 +24,7 @@ from homeassistant.components.teslemetry.const import (
     LABS_CHARGE_ON_SOLAR_FEATURE,
 )
 from homeassistant.components.teslemetry.coordinator import (
+    ENERGY_CONFIG_INTERVAL,
     METADATA_INTERVAL,
     VEHICLE_INTERVAL,
 )
@@ -46,6 +47,8 @@ from . import (
 from .const import (
     COMMAND_ERRORS,
     COMMAND_OK,
+    CONFIG_JSON_APPLIED,
+    CONFIG_JSON_NOT_APPLIED,
     METADATA,
     METADATA_NOSCOPE,
     SITE_INFO,
@@ -1010,7 +1013,7 @@ async def test_grid_limit_number_cloud(
 
     with patch(
         f"tesla_fleet_api.teslemetry.EnergySite.{method}",
-        return_value=COMMAND_OK,
+        return_value=CONFIG_JSON_APPLIED,
     ) as call:
         await hass.services.async_call(
             NUMBER_DOMAIN,
@@ -1083,3 +1086,84 @@ async def test_grid_limit_entities_follow_pairing(
         await hass.async_block_till_done(wait_background_tasks=True)
 
     assert hass.states.get("number.energy_site_grid_export_limit") is not None
+
+
+GRID_LIMIT_PARAMS = [
+    pytest.param(
+        "number.energy_site_grid_export_limit", "set_export_limit", 5.0, id="export"
+    ),
+    pytest.param(
+        "number.energy_site_grid_import_limit", "set_import_limit", 14.0, id="import"
+    ),
+]
+
+
+@pytest.mark.parametrize(("entity_id", "method", "value"), GRID_LIMIT_PARAMS)
+async def test_grid_limit_number_local(
+    hass: HomeAssistant, entity_id: str, method: str, value: float
+) -> None:
+    """Test a grid limit is sent to the local gateway of a site with local control."""
+    await setup_paired_platform(hass, [Platform.NUMBER])
+
+    with (
+        patch(
+            f"tesla_fleet_api.tesla.powerwall.PowerwallEnergySite.{method}",
+            return_value=CONFIG_JSON_APPLIED,
+        ) as local,
+        patch(f"tesla_fleet_api.teslemetry.EnergySite.{method}") as cloud,
+    ):
+        await hass.services.async_call(
+            NUMBER_DOMAIN,
+            SERVICE_SET_VALUE,
+            {ATTR_ENTITY_ID: entity_id, ATTR_VALUE: value},
+            blocking=True,
+        )
+    local.assert_awaited_once_with(value)
+    cloud.assert_not_called()
+    assert hass.states.get(entity_id).state == str(value)
+
+
+@pytest.mark.parametrize(("entity_id", "method", "value"), GRID_LIMIT_PARAMS)
+async def test_grid_limit_number_not_applied(
+    hass: HomeAssistant, entity_id: str, method: str, value: float
+) -> None:
+    """Test a grid limit the gateway did not keep raises and leaves the state alone."""
+    await setup_platform(hass, [Platform.NUMBER])
+    before = hass.states.get(entity_id).state
+
+    with (
+        patch(
+            f"tesla_fleet_api.teslemetry.EnergySite.{method}",
+            return_value=CONFIG_JSON_NOT_APPLIED,
+        ),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await hass.services.async_call(
+            NUMBER_DOMAIN,
+            SERVICE_SET_VALUE,
+            {ATTR_ENTITY_ID: entity_id, ATTR_VALUE: value},
+            blocking=True,
+        )
+    assert exc_info.value.translation_key == "config_not_applied"
+    assert hass.states.get(entity_id).state == before
+
+
+async def test_grid_limit_number_value_from_local_config(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_powerwall_local_config: AsyncMock,
+) -> None:
+    """Test the grid limits follow the local gateway's config.json."""
+    mock_powerwall_local_config.return_value = {
+        "min_site_meter_power_ac": -3,
+        "max_site_meter_power_ac": 9.5,
+        "on_grid_solar_curtailment_enabled": False,
+    }
+    await setup_paired_platform(hass, [Platform.NUMBER])
+
+    freezer.tick(ENERGY_CONFIG_INTERVAL)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert hass.states.get("number.energy_site_grid_export_limit").state == "3"
+    assert hass.states.get("number.energy_site_grid_import_limit").state == "9.5"

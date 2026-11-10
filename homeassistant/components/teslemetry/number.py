@@ -44,7 +44,7 @@ from .entity import (
 from .helpers import (
     async_set_charge_on_solar,
     handle_command,
-    handle_energy_site_command,
+    handle_config_json_command,
     handle_vehicle_command,
 )
 from .models import (
@@ -424,7 +424,7 @@ class TeslemetryEnergyGridLimitNumberEntity(TeslemetryEnergyInfoEntity, NumberEn
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         self.raise_for_scope(Scope.ENERGY_CMDS)
-        await handle_energy_site_command(self.entity_description.func(self.api, value))
+        await handle_config_json_command(self.entity_description.func(self.api, value))
         self._attr_native_value = value
         self.coordinator.async_set_command_value(
             self.key, value * self.entity_description.site_info_sign

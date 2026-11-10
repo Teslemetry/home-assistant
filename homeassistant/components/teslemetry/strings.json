@@ -1351,6 +1351,9 @@
     "command_reason": {
       "message": "Command was rejected: {reason}"
     },
+    "config_not_applied": {
+      "message": "The Powerwall gateway configuration changed while the setting was being saved, try again"
+    },
     "energy_site_not_paired": {
       "message": "Teslemetry is not paired with the Powerwall system for {site}, pair it in the Teslemetry console or set up local control"
     },
