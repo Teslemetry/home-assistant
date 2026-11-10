@@ -1154,6 +1154,18 @@ DHCP: Final[list[dict[str, str | bool]]] = [
         "macaddress": "4CFCAA*",
     },
     {
+        "domain": "teslemetry",
+        "hostname": "1118431-*",
+    },
+    {
+        "domain": "teslemetry",
+        "hostname": "1232100-*",
+    },
+    {
+        "domain": "teslemetry",
+        "hostname": "teslapw_*",
+    },
+    {
         "domain": "tolo",
         "hostname": "usr-tcp232-ed2",
     },
