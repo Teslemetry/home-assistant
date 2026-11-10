@@ -285,9 +285,11 @@ class TeslemetryChargeOnSolarCoordinator(DataUpdateCoordinator[None]):
             ) is None:
                 return
             self.vehicle.charge_on_solar_enabled = feature.charge_on_solar.enabled
-            self.vehicle.charge_on_solar_lower_limit = round(
-                feature.charge_on_solar.lower_charge_limit
-            )
+            lower_limit = round(feature.charge_on_solar.lower_charge_limit)
+            # Capped like a sent lower limit, so the number shows what the switch sends.
+            if (charge_limit := self.vehicle.charge_limit_soc) is not None:
+                lower_limit = min(lower_limit, charge_limit)
+            self.vehicle.charge_on_solar_lower_limit = lower_limit
             self.store.async_save(self.vehicle)
 
 
