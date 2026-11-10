@@ -422,12 +422,11 @@ class TeslemetryChargeOnSolarSwitchEntity(TeslemetryChargeOnSolarEntity, SwitchE
             self._store.async_save(self.vehicle)
             self._attr_is_on = enabled
             self.async_write_ha_state()
-            await self._store.async_read(self.vehicle)
 
     @callback
     @override
     def _async_handle_charge_on_solar_read(self) -> None:
-        """Take the charge-on-solar state read from the vehicle."""
+        """Take the charge-on-solar state read over Bluetooth."""
         self._attr_is_on = self.vehicle.charge_on_solar_enabled
         self.async_write_ha_state()
 
