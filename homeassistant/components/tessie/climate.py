@@ -176,7 +176,9 @@ class TessieClimateEntity(TessieCabinClimateEntity):
                 passenger_temp = temp
 
             await self.run(
-                self.api.set_temps(driver_temp=temp, passenger_temp=passenger_temp)
+                self.api.set_temperatures(
+                    driver_temperature=temp, passenger_temperature=passenger_temp
+                )
             )
             self.set((DRIVER_TEMP, temp), (PASSENGER_TEMP, passenger_temp))
 
@@ -251,8 +253,9 @@ class TessiePassengerClimateEntity(TessieCabinClimateEntity):
 
         if temp := kwargs.get(ATTR_TEMPERATURE):
             await self.run(
-                self.api.set_temps(
-                    driver_temp=self.get(DRIVER_TEMP), passenger_temp=temp
+                self.api.set_temperatures(
+                    driver_temperature=self.get(DRIVER_TEMP),
+                    passenger_temperature=temp,
                 )
             )
             self._split_selected = False
@@ -269,7 +272,9 @@ class TessiePassengerClimateEntity(TessieCabinClimateEntity):
 
         if preset_mode == PRESET_SYNC:
             await self.run(
-                self.api.set_temps(driver_temp=driver_temp, passenger_temp=driver_temp)
+                self.api.set_temperatures(
+                    driver_temperature=driver_temp, passenger_temperature=driver_temp
+                )
             )
             self._split_selected = False
             self.set((PASSENGER_TEMP, driver_temp))

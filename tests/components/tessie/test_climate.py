@@ -32,7 +32,6 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotSupported
 from homeassistant.helpers import entity_registry as er
 
 from .common import (
-    COMMAND_OK,
     ERROR_CONNECTION,
     ERROR_UNKNOWN,
     TEST_RESPONSE,
@@ -84,7 +83,8 @@ async def test_climate(
     # Test setting climate temp
     with (
         patch(
-            "tesla_fleet_api.tessie.Vehicle.set_temps", return_value=COMMAND_OK
+            "tesla_fleet_api.tessie.Vehicle.set_temperatures",
+            return_value=TEST_RESPONSE,
         ) as mock_set,
         patch(
             "homeassistant.components.tessie.climate.start_climate_preconditioning",
@@ -101,7 +101,9 @@ async def test_climate(
             },
             blocking=True,
         )
-        mock_set.assert_called_once_with(driver_temp=20, passenger_temp=20)
+        mock_set.assert_called_once_with(
+            driver_temperature=20, passenger_temperature=20
+        )
         mock_set2.assert_called_once()
     state = hass.states.get(entity_id)
     assert state.attributes[ATTR_TEMPERATURE] == 20
@@ -389,8 +391,9 @@ async def test_passenger_climate_set_temperature(
 
     with (
         patch(
-            "tesla_fleet_api.tessie.Vehicle.set_temps", return_value=COMMAND_OK
-        ) as mock_set_temps,
+            "tesla_fleet_api.tessie.Vehicle.set_temperatures",
+            return_value=TEST_RESPONSE,
+        ) as mock_set_temperatures,
         patch(
             "homeassistant.components.tessie.climate.start_climate_preconditioning",
             return_value=TEST_RESPONSE,
@@ -406,7 +409,9 @@ async def test_passenger_climate_set_temperature(
             },
             blocking=True,
         )
-    mock_set_temps.assert_called_once_with(driver_temp=22, passenger_temp=temperature)
+    mock_set_temperatures.assert_called_once_with(
+        driver_temperature=22, passenger_temperature=temperature
+    )
     mock_start.assert_called_once()
 
     state = hass.states.get(PASSENGER_ENTITY_ID)
@@ -424,7 +429,9 @@ async def test_passenger_climate_set_temperature_sync(
     await setup_platform(hass, [Platform.CLIMATE])
 
     with (
-        patch("tesla_fleet_api.tessie.Vehicle.set_temps") as mock_set_temps,
+        patch(
+            "tesla_fleet_api.tessie.Vehicle.set_temperatures"
+        ) as mock_set_temperatures,
         pytest.raises(ServiceNotSupported),
     ):
         await hass.services.async_call(
@@ -433,7 +440,7 @@ async def test_passenger_climate_set_temperature_sync(
             {ATTR_ENTITY_ID: [PASSENGER_ENTITY_ID], ATTR_TEMPERATURE: 20},
             blocking=True,
         )
-    mock_set_temps.assert_not_called()
+    mock_set_temperatures.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -448,7 +455,7 @@ async def test_passenger_climate_set_temperature_sync(
         pytest.param(
             24,
             "sync",
-            [call(driver_temp=22, passenger_temp=22)],
+            [call(driver_temperature=22, passenger_temperature=22)],
             PASSENGER_SYNC_FEATURES,
             None,
             id="sync",
@@ -471,15 +478,15 @@ async def test_passenger_climate_set_preset_mode(
     await setup_platform(hass, [Platform.CLIMATE])
 
     with patch(
-        "tesla_fleet_api.tessie.Vehicle.set_temps", return_value=COMMAND_OK
-    ) as mock_set_temps:
+        "tesla_fleet_api.tessie.Vehicle.set_temperatures", return_value=TEST_RESPONSE
+    ) as mock_set_temperatures:
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_PRESET_MODE,
             {ATTR_ENTITY_ID: [PASSENGER_ENTITY_ID], ATTR_PRESET_MODE: preset_mode},
             blocking=True,
         )
-    assert mock_set_temps.call_args_list == expected_calls
+    assert mock_set_temperatures.call_args_list == expected_calls
 
     state = hass.states.get(PASSENGER_ENTITY_ID)
     assert state.attributes[ATTR_PRESET_MODE] == preset_mode
@@ -497,7 +504,9 @@ async def test_passenger_climate_set_preset_mode_driver_unknown(
     await setup_platform(hass, [Platform.CLIMATE])
 
     with (
-        patch("tesla_fleet_api.tessie.Vehicle.set_temps") as mock_set_temps,
+        patch(
+            "tesla_fleet_api.tessie.Vehicle.set_temperatures"
+        ) as mock_set_temperatures,
         pytest.raises(HomeAssistantError) as error,
     ):
         await hass.services.async_call(
@@ -507,7 +516,7 @@ async def test_passenger_climate_set_preset_mode_driver_unknown(
             blocking=True,
         )
     assert error.value.translation_key == "driver_temperature_unknown"
-    mock_set_temps.assert_not_called()
+    mock_set_temperatures.assert_not_called()
 
 
 @pytest.mark.usefixtures("entity_registry_enabled_by_default")
@@ -561,14 +570,35 @@ async def test_climate_set_temperature_passenger(
     await setup_platform(hass, [Platform.CLIMATE])
 
     with patch(
-        "tesla_fleet_api.tessie.Vehicle.set_temps", return_value=COMMAND_OK
-    ) as mock_set_temps:
+        "tesla_fleet_api.tessie.Vehicle.set_temperatures", return_value=TEST_RESPONSE
+    ) as mock_set_temperatures:
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_TEMPERATURE,
             {ATTR_ENTITY_ID: ["climate.test_climate"], ATTR_TEMPERATURE: 20},
             blocking=True,
         )
-    mock_set_temps.assert_called_once_with(
-        driver_temp=20, passenger_temp=passenger_temp
+    mock_set_temperatures.assert_called_once_with(
+        driver_temperature=20, passenger_temperature=passenger_temp
     )
+
+
+async def test_climate_set_temperature_failed(hass: HomeAssistant) -> None:
+    """Test a failed result from Tessie raises an error."""
+    await setup_platform(hass, [Platform.CLIMATE])
+
+    with (
+        patch(
+            "tesla_fleet_api.tessie.Vehicle.set_temperatures",
+            return_value=TEST_RESPONSE_ERROR,
+        ),
+        pytest.raises(HomeAssistantError) as error,
+    ):
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_SET_TEMPERATURE,
+            {ATTR_ENTITY_ID: ["climate.test_climate"], ATTR_TEMPERATURE: 20},
+            blocking=True,
+        )
+    assert error.value.translation_key == "command_failed"
+    assert error.value.translation_placeholders == {"message": "reason_why"}
