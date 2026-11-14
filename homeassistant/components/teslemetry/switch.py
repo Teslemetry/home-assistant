@@ -15,7 +15,7 @@ from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import StateType
@@ -422,6 +422,13 @@ class TeslemetryChargeOnSolarSwitchEntity(TeslemetryChargeOnSolarEntity, SwitchE
             self._store.async_save(self.vehicle)
             self._attr_is_on = enabled
             self.async_write_ha_state()
+
+    @callback
+    @override
+    def _async_handle_charge_on_solar_read(self) -> None:
+        """Take the charge-on-solar state read over Bluetooth."""
+        self._attr_is_on = self.vehicle.charge_on_solar_enabled
+        self.async_write_ha_state()
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:

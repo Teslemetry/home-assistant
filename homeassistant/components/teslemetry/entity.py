@@ -417,6 +417,10 @@ class TeslemetryChargeOnSolarEntity(TeslemetryVehicleStreamEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        if (coordinator := self.vehicle.charge_on_solar_coordinator) is not None:
+            self.async_on_remove(
+                coordinator.async_add_listener(self._async_handle_charge_on_solar_read)
+            )
         if self.vehicle.polls_charge_limit:
             self.async_on_remove(
                 self.vehicle.coordinator.async_add_listener(
@@ -431,6 +435,11 @@ class TeslemetryChargeOnSolarEntity(TeslemetryVehicleStreamEntity):
                 self._async_handle_charge_limit_soc
             )
         )
+
+    @callback
+    @abstractmethod
+    def _async_handle_charge_on_solar_read(self) -> None:
+        """Take the charge-on-solar settings read over Bluetooth."""
 
     @callback
     def _async_handle_coordinator_update(self) -> None:
