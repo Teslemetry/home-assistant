@@ -3,10 +3,10 @@
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, override
 
-from aiopowerwall import BatteryUnit
 from tesla_fleet_api.const import Scope
 from tesla_fleet_api.router import VehicleRouter
 from tesla_fleet_api.tesla import EnergySiteRouter
+from tesla_fleet_api.tesla.powerwall import BatteryUnit
 from tesla_fleet_api.teslemetry import EnergySite, Vehicle
 
 from homeassistant.core import callback
@@ -104,6 +104,7 @@ class TeslemetryPollingEntity(
         """Return if the value is a literal None."""
         return self.get(self.key, False) is None
 
+    @callback
     @override
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
