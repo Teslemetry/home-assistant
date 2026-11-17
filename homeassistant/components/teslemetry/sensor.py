@@ -12,7 +12,8 @@ from tesla_fleet_api.tesla.powerwall import (
     PV_STRING_STATES,
     PV_STRINGS,
     BatteryUnit,
-    component_float,
+    BatteryUnitReadings,
+    battery_unit_readings,
     current_power,
     islander_frequency,
     islander_voltage,
@@ -1828,7 +1829,7 @@ ENERGY_LOCAL_CONFIG_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
 class TeslemetryLocalUnitSensorEntityDescription(SensorEntityDescription):
     """Describes a Teslemetry sensor of one battery unit read from the local gateway."""
 
-    value_fn: Callable[[dict[str, Any], int], StateType]
+    value_fn: Callable[[BatteryUnitReadings], StateType]
 
 
 ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
@@ -1836,9 +1837,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
 ] = (
     TeslemetryLocalUnitSensorEntityDescription(
         key="energy_remaining",
-        value_fn=lambda data, slot: component_float(
-            data, "bms", "BMS_nominalEnergyRemaining", slot
-        ),
+        value_fn=lambda readings: readings.energy_remaining,
         device_class=SensorDeviceClass.ENERGY_STORAGE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
@@ -1846,9 +1845,7 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
     ),
     TeslemetryLocalUnitSensorEntityDescription(
         key="full_pack_energy",
-        value_fn=lambda data, slot: component_float(
-            data, "bms", "BMS_nominalFullPackEnergy", slot
-        ),
+        value_fn=lambda readings: readings.full_pack_energy,
         device_class=SensorDeviceClass.ENERGY_STORAGE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
@@ -2348,7 +2345,8 @@ def _local_unit_sensors(
         TeslemetryEnergyLocalUnitSensorEntity(energysite, unit_id, unit, description)
         for unit_id, unit in energysite.local_battery_units.items()
         for description in ENERGY_LOCAL_UNIT_DESCRIPTIONS
-        if description.value_fn(coordinator.data, unit.component_slot) is not None
+        if description.value_fn(battery_unit_readings(coordinator.data, unit))
+        is not None
     ]
 
 
@@ -2387,7 +2385,7 @@ class TeslemetryEnergyLocalUnitSensorEntity(
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         return self.entity_description.value_fn(
-            self.coordinator.data, self.unit.component_slot
+            battery_unit_readings(self.coordinator.data, self.unit)
         )
 
 

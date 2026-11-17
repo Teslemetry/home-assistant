@@ -144,8 +144,7 @@ class TeslemetryEnergyData:
 
         The status, components and config documents refresh on different
         intervals, so the units are matched once from the first refresh of both
-        coordinators. An expansion is keyed by serial number, as its DIN is only
-        in the config document.
+        coordinators.
         """
         status = self.local_status_coordinator
         components = self.local_components_coordinator
@@ -160,10 +159,6 @@ class TeslemetryEnergyData:
             self.local_battery_units = {
                 unit_id: unit
                 for unit in battery_units({}, status.data, components.data)
-                if (
-                    unit_id := unit.serial_number
-                    if unit.role == "expansion"
-                    else unit.din
-                )
+                if (unit_id := unit.unit_id)
             }
         return self.local_battery_units
