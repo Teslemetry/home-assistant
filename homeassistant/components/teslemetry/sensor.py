@@ -6,9 +6,16 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, override
 
-from aiopowerwall import component_float, current_power, pv_string_current
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
+from tesla_fleet_api.tesla.powerwall import (
+    PV_STRINGS,
+    current_power,
+    islander_frequency,
+    islander_voltage,
+    pv_string_current,
+    pv_string_voltage,
+)
 from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
 from teslemetry_stream.const import CreditsEvent
 
@@ -42,7 +49,6 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import PressureConverter
 from homeassistant.util.variance import ignore_variance
 
-from . import TeslemetryConfigEntry
 from .const import ENERGY_HISTORY_FIELDS
 from .coordinator import PERIOD_START, WALL_CONNECTOR_TOTALS
 from .entity import (
@@ -58,7 +64,7 @@ from .entity import (
     TeslemetryWallConnectorTotalsEntity,
 )
 from .helpers import async_remove_stale_vehicle_entities
-from .models import TeslemetryEnergyData, TeslemetryVehicleData
+from .models import TeslemetryConfigEntry, TeslemetryEnergyData, TeslemetryVehicleData
 
 PARALLEL_UPDATES = 0
 
@@ -1251,6 +1257,7 @@ VEHICLE_DESCRIPTIONS: tuple[TeslemetryVehicleSensorEntityDescription, ...] = (
             callback
         ),
         state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -1261,6 +1268,7 @@ VEHICLE_DESCRIPTIONS: tuple[TeslemetryVehicleSensorEntityDescription, ...] = (
             callback
         ),
         state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -1682,17 +1690,13 @@ class TeslemetryLocalSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], StateType]
 
 
-PV_STRINGS = ("A", "B", "C", "D", "E", "F")
-
 ENERGY_LOCAL_COMPONENTS_DESCRIPTIONS: tuple[
     TeslemetryLocalSensorEntityDescription, ...
 ] = (
     *(
         TeslemetryLocalSensorEntityDescription(
             key=f"pv_string_{string.lower()}_voltage",
-            value_fn=partial(
-                component_float, kind="pch", name=f"PCH_PvVoltage{string}"
-            ),
+            value_fn=partial(pv_string_voltage, string=string),
             device_class=SensorDeviceClass.VOLTAGE,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricPotential.VOLT,
@@ -1713,20 +1717,6 @@ ENERGY_LOCAL_COMPONENTS_DESCRIPTIONS: tuple[
         for string in PV_STRINGS
     ),
 )
-
-
-def _islander_measurement(field: str) -> Callable[[dict[str, Any]], float | None]:
-    """Return a function reading an islander AC measurement from the gateway status."""
-
-    def value_fn(data: dict[str, Any]) -> float | None:
-        value: Any = data
-        for key in ("esCan", "bus", "ISLANDER", "ISLAND_AcMeasurements", field):
-            if not isinstance(value, dict):
-                return None
-            value = value.get(key)
-        return value if isinstance(value, int | float) else None
-
-    return value_fn
 
 
 def _meter_power(location: str) -> Callable[[dict[str, Any]], StateType]:
@@ -1761,20 +1751,20 @@ ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
     ),
     *(
         TeslemetryLocalSensorEntityDescription(
-            key=f"island_freq_l{phase}_{side.lower()}",
-            value_fn=_islander_measurement(f"ISLAND_FreqL{phase}_{side}"),
+            key=f"island_freq_l{phase}_{side}",
+            value_fn=partial(islander_frequency, phase=phase, side=side),
             device_class=SensorDeviceClass.FREQUENCY,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfFrequency.HERTZ,
             entity_registry_enabled_default=False,
         )
         for phase in (1, 2, 3)
-        for side in ("Load", "Main")
+        for side in ("load", "main")
     ),
     *(
         TeslemetryLocalSensorEntityDescription(
-            key=f"island_voltage_l{phase}n_{side.lower()}",
-            value_fn=_islander_measurement(f"ISLAND_VL{phase}N_{side}"),
+            key=f"island_voltage_l{phase}n_{side}",
+            value_fn=partial(islander_voltage, phase=phase, side=side),
             device_class=SensorDeviceClass.VOLTAGE,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricPotential.VOLT,
@@ -1782,7 +1772,7 @@ ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
             entity_registry_enabled_default=phase == 1,
         )
         for phase in (1, 2, 3)
-        for side in ("Load", "Main")
+        for side in ("load", "main")
     ),
 )
 
