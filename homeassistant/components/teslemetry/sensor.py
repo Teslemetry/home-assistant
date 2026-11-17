@@ -6,14 +6,19 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, override
 
-from aiopowerwall import (
+from tesla_fleet_api import firmware_at_least
+from tesla_fleet_api.const import Scope
+from tesla_fleet_api.tesla.powerwall import (
+    PV_STRINGS,
     component_float,
     component_signal,
     current_power,
+    islander_frequency,
+    islander_voltage,
     pv_string_current,
+    pv_string_voltage,
+    site_info,
 )
-from tesla_fleet_api import firmware_at_least
-from tesla_fleet_api.const import Scope
 from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
 from teslemetry_stream.const import CreditsEvent
 
@@ -47,7 +52,6 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import PressureConverter
 from homeassistant.util.variance import ignore_variance
 
-from . import TeslemetryConfigEntry
 from .const import ENERGY_HISTORY_FIELDS
 from .coordinator import PERIOD_START, WALL_CONNECTOR_TOTALS
 from .entity import (
@@ -63,7 +67,7 @@ from .entity import (
     TeslemetryWallConnectorTotalsEntity,
 )
 from .helpers import async_remove_stale_vehicle_entities
-from .models import TeslemetryEnergyData, TeslemetryVehicleData
+from .models import TeslemetryConfigEntry, TeslemetryEnergyData, TeslemetryVehicleData
 
 PARALLEL_UPDATES = 0
 
@@ -1256,6 +1260,7 @@ VEHICLE_DESCRIPTIONS: tuple[TeslemetryVehicleSensorEntityDescription, ...] = (
             callback
         ),
         state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -1266,6 +1271,7 @@ VEHICLE_DESCRIPTIONS: tuple[TeslemetryVehicleSensorEntityDescription, ...] = (
             callback
         ),
         state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
@@ -1687,8 +1693,6 @@ class TeslemetryLocalSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], StateType]
 
 
-PV_STRINGS = ("A", "B", "C", "D", "E", "F")
-
 PV_STRING_STATES = {
     "Pv_Active": "active",
     "Pv_Active_Parallel": "active_parallel",
@@ -1709,9 +1713,7 @@ ENERGY_LOCAL_COMPONENTS_DESCRIPTIONS: tuple[
     *(
         TeslemetryLocalSensorEntityDescription(
             key=f"pv_string_{string.lower()}_voltage",
-            value_fn=partial(
-                component_float, kind="pch", name=f"PCH_PvVoltage{string}"
-            ),
+            value_fn=partial(pv_string_voltage, string=string),
             device_class=SensorDeviceClass.VOLTAGE,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricPotential.VOLT,
@@ -1752,20 +1754,6 @@ ENERGY_LOCAL_COMPONENTS_DESCRIPTIONS: tuple[
 )
 
 
-def _islander_measurement(field: str) -> Callable[[dict[str, Any]], float | None]:
-    """Return a function reading an islander AC measurement from the gateway status."""
-
-    def value_fn(data: dict[str, Any]) -> float | None:
-        value: Any = data
-        for key in ("esCan", "bus", "ISLANDER", "ISLAND_AcMeasurements", field):
-            if not isinstance(value, dict):
-                return None
-            value = value.get(key)
-        return value if isinstance(value, int | float) else None
-
-    return value_fn
-
-
 def _meter_power(location: str) -> Callable[[dict[str, Any]], StateType]:
     """Return a function reading a meter location's power from the gateway status."""
 
@@ -1798,20 +1786,20 @@ ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
     ),
     *(
         TeslemetryLocalSensorEntityDescription(
-            key=f"island_freq_l{phase}_{side.lower()}",
-            value_fn=_islander_measurement(f"ISLAND_FreqL{phase}_{side}"),
+            key=f"island_freq_l{phase}_{side}",
+            value_fn=partial(islander_frequency, phase=phase, side=side),
             device_class=SensorDeviceClass.FREQUENCY,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfFrequency.HERTZ,
             entity_registry_enabled_default=False,
         )
         for phase in (1, 2, 3)
-        for side in ("Load", "Main")
+        for side in ("load", "main")
     ),
     *(
         TeslemetryLocalSensorEntityDescription(
-            key=f"island_voltage_l{phase}n_{side.lower()}",
-            value_fn=_islander_measurement(f"ISLAND_VL{phase}N_{side}"),
+            key=f"island_voltage_l{phase}n_{side}",
+            value_fn=partial(islander_voltage, phase=phase, side=side),
             device_class=SensorDeviceClass.VOLTAGE,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricPotential.VOLT,
@@ -1819,32 +1807,27 @@ ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
             entity_registry_enabled_default=phase == 1,
         )
         for phase in (1, 2, 3)
-        for side in ("Load", "Main")
+        for side in ("load", "main")
     ),
 )
-
-
-def _site_info(key: str) -> Callable[[dict[str, Any]], StateType]:
-    """Return a function reading a value from the gateway's site info."""
-    return lambda data: data.get("site_info", {}).get(key)
 
 
 ENERGY_LOCAL_CONFIG_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, ...] = (
     TeslemetryLocalSensorEntityDescription(
         key="grid_code",
-        value_fn=_site_info("grid_code"),
+        value_fn=lambda data: site_info(data).grid_code,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalSensorEntityDescription(
         key="country",
-        value_fn=_site_info("country"),
+        value_fn=lambda data: site_info(data).country,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalSensorEntityDescription(
         key="distributor",
-        value_fn=_site_info("distributor"),
+        value_fn=lambda data: site_info(data).distributor,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
