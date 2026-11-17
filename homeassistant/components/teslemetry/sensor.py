@@ -15,6 +15,7 @@ from tesla_fleet_api.tesla.powerwall import (
     islander_voltage,
     pv_string_current,
     pv_string_voltage,
+    site_info,
 )
 from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
 from teslemetry_stream.const import CreditsEvent
@@ -1777,27 +1778,22 @@ ENERGY_LOCAL_STATUS_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, 
 )
 
 
-def _site_info(key: str) -> Callable[[dict[str, Any]], StateType]:
-    """Return a function reading a value from the gateway's site info."""
-    return lambda data: data.get("site_info", {}).get(key)
-
-
 ENERGY_LOCAL_CONFIG_DESCRIPTIONS: tuple[TeslemetryLocalSensorEntityDescription, ...] = (
     TeslemetryLocalSensorEntityDescription(
         key="grid_code",
-        value_fn=_site_info("grid_code"),
+        value_fn=lambda data: site_info(data).grid_code,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalSensorEntityDescription(
         key="country",
-        value_fn=_site_info("country"),
+        value_fn=lambda data: site_info(data).country,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalSensorEntityDescription(
         key="distributor",
-        value_fn=_site_info("distributor"),
+        value_fn=lambda data: site_info(data).distributor,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
