@@ -840,13 +840,17 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
                     self.hass, host, password, self._key_pem
                 )
             except PowerwallKeyRejectedError as err:
-                LOGGER.debug("Powerwall rejected the signed read: %s", err.__cause__)
+                LOGGER.warning("Powerwall rejected the signed read: %s", err.__cause__)
                 errors["base"] = "key_not_approved"
-            except PowerwallAuthenticationError:
+            except PowerwallAuthenticationError as err:
+                LOGGER.warning("Powerwall at %s rejected the password: %s", host, err)
                 errors["base"] = "invalid_password"
             except PowerwallError as err:
-                LOGGER.debug("Local Powerwall verify failed: %s", err)
+                LOGGER.warning("Local Powerwall verify failed at %s: %s", host, err)
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Unexpected error verifying the Powerwall at %s", host)
+                errors["base"] = "unknown"
             else:
                 return self._async_save_credentials(host, password)
 
