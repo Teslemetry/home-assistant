@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from aiopowerwall import BatteryUnit, battery_units
 from tesla_fleet_api import firmware_at_least
 from tesla_fleet_api.const import Scope
 from tesla_fleet_api.router import VehicleRouter
 from tesla_fleet_api.tesla import EnergySiteRouter
+from tesla_fleet_api.tesla.powerwall import BatteryUnit, battery_units
 from tesla_fleet_api.tesla.vehicle.bluetooth import VehicleBluetooth
 from tesla_fleet_api.teslemetry import EnergySite, Vehicle
 from teslemetry_stream import TeslemetryStream, TeslemetryStreamVehicle
@@ -31,6 +31,8 @@ from .coordinator import (
     TeslemetryWallConnectorTotalsCoordinator,
 )
 
+type TeslemetryConfigEntry = ConfigEntry[TeslemetryData]
+
 STORAGE_VERSION = 1
 
 
@@ -51,7 +53,7 @@ class TeslemetryVehicleData:
     """Data for a vehicle in the Teslemetry integration."""
 
     api: Vehicle | VehicleRouter
-    config_entry: ConfigEntry
+    config_entry: TeslemetryConfigEntry
     coordinator: TeslemetryVehicleDataCoordinator
     poll: bool
     stream: TeslemetryStream
@@ -142,8 +144,7 @@ class TeslemetryEnergyData:
 
         The status, components and config documents refresh on different
         intervals, so the units are matched once from the first refresh of both
-        coordinators. An expansion is keyed by serial number, as its DIN is only
-        in the config document.
+        coordinators.
         """
         status = self.local_status_coordinator
         components = self.local_components_coordinator
@@ -158,10 +159,6 @@ class TeslemetryEnergyData:
             self.local_battery_units = {
                 unit_id: unit
                 for unit in battery_units({}, status.data, components.data)
-                if (
-                    unit_id := unit.serial_number
-                    if unit.role == "expansion"
-                    else unit.din
-                )
+                if (unit_id := unit.unit_id)
             }
         return self.local_battery_units
