@@ -1853,24 +1853,19 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
     ),
     TeslemetryLocalUnitSensorEntityDescription(
         key="hvp_state",
-        value_fn=lambda data, slot: component_signal(data, "hvp", "HVP_State", slot),
+        value_fn=lambda readings: readings.hvp_state,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
         key="battery_connection_status",
-        # The battery aggregator reports one connection status per component slot.
-        value_fn=lambda data, slot: component_signal(
-            data, "baggr", f"BAGGR_LOG_BattConnectionStatus{slot}"
-        ),
+        value_fn=lambda readings: readings.battery_connection_status,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     TeslemetryLocalUnitSensorEntityDescription(
         key="hvp_firmware",
-        value_fn=lambda data, slot: component_signal(
-            data, "hvp", "HVP_appGitHash", slot
-        ),
+        value_fn=lambda readings: readings.hvp_firmware,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
