@@ -1872,18 +1872,14 @@ ENERGY_LOCAL_UNIT_DESCRIPTIONS: tuple[
 )
 
 
-def _unit_pv_string_voltage(
-    data: dict[str, Any], slot: int, *, string: str
-) -> float | None:
+def _unit_pv_string_voltage(readings: BatteryUnitReadings, string: str) -> float | None:
     """Return the voltage of a PV string on a Powerwall 3 battery unit."""
-    return component_float(data, "pch", f"PCH_PvVoltage{string}", slot)
+    return readings.pv_strings[string].voltage
 
 
-def _unit_pv_string_current(
-    data: dict[str, Any], slot: int, *, string: str
-) -> float | None:
+def _unit_pv_string_current(readings: BatteryUnitReadings, string: str) -> float | None:
     """Return the current of a PV string on a Powerwall 3 battery unit."""
-    return pv_string_current(data, string, slot)
+    return readings.pv_strings[string].current
 
 
 # The leader's PV strings stay on the energy site device, so only followers use these.
