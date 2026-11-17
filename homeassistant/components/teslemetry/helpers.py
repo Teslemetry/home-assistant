@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from ipaddress import IPv4Network
 from typing import Any, cast
 
 from aiohttp import ClientError
@@ -18,6 +19,7 @@ from tesla_fleet_api.tesla.powerwall import (
 from tesla_fleet_api.teslemetry import EnergySite, Vehicle
 from tesla_fleet_api.teslemetry.energysite import TeslemetryEnergySite
 
+from homeassistant.components import network
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -55,6 +57,16 @@ def cloud_energy_site(api: EnergySite | EnergySiteRouter) -> TeslemetryEnergySit
         TeslemetryEnergySite,
         api.secondary if isinstance(api, EnergySiteRouter) else api,
     )
+
+
+async def async_get_local_networks(hass: HomeAssistant) -> list[IPv4Network]:
+    """Return the IPv4 networks of Home Assistant's enabled adapters."""
+    return [
+        IPv4Network(f"{ipv4['address']}/{ipv4['network_prefix']}", strict=False)
+        for adapter in await network.async_get_adapters(hass)
+        if adapter["enabled"]
+        for ipv4 in adapter["ipv4"]
+    ]
 
 
 def create_powerwall_client(

@@ -109,6 +109,7 @@ from .coordinator import (
 )
 from .helpers import (
     async_get_ble_parent,
+    async_get_local_networks,
     async_update_device_sw_version,
     create_powerwall_client,
     flatten,
@@ -559,7 +560,9 @@ async def _async_rediscover_gateway(
     site_id = cloud_energy_site.energy_site_id
     issue_id = gateway_issue_id(entry.entry_id, site_id)
     try:
-        host = await cloud_energy_site.find_gateway_address()
+        host = await cloud_energy_site.find_gateway_address(
+            await async_get_local_networks(hass)
+        )
     except (ClientError, TeslaFleetError) as err:
         LOGGER.debug(
             "Gateway address lookup failed for energy site %s: %s", site_id, err
