@@ -162,6 +162,17 @@
       "climate_state_cabin_overheat_protection": {
         "name": "Cabin overheat protection"
       },
+      "passenger_temp": {
+        "name": "Passenger climate",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "split": "Split",
+              "sync": "Sync with driver"
+            }
+          }
+        }
+      },
       "primary": {
         "name": "[%key:component::climate::title%]",
         "state_attributes": {
@@ -652,6 +663,9 @@
     },
     "cpd_enabled": {
       "message": "Child presence detection has blocked the command, remove weight from seats."
+    },
+    "driver_temperature_unknown": {
+      "message": "The driver temperature is not known yet, wait for the vehicle to report it and try again."
     },
     "incorrect_pin": {
       "message": "Incorrect PIN for {name}."

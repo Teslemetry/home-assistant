@@ -42,6 +42,13 @@ async def handle_command(command: Awaitable[dict[str, Any]]) -> dict[str, Any]:
             translation_placeholders={"message": e.message},
         ) from e
     _LOGGER.debug("Command result: %s", result)
+    # Tessie's own command endpoints report a failure in the body, not the status
+    if result.get("result") is False:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+            translation_placeholders={"message": result.get("reason", "unknown")},
+        )
     return result
 
 
