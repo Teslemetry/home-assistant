@@ -159,13 +159,18 @@ class GatewayNotFoundRepairFlow(RepairsFlow):
             await async_verify_local_gateway(
                 self.hass, host, self._subentry.data[CONF_PASSWORD], self._key_pem
             )
-        except PowerwallKeyRejectedError:
+        except PowerwallKeyRejectedError as err:
+            LOGGER.warning("Powerwall rejected the signed read: %s", err.__cause__)
             return "key_not_approved"
-        except PowerwallAuthenticationError:
+        except PowerwallAuthenticationError as err:
+            LOGGER.warning("Powerwall at %s rejected the password: %s", host, err)
             return "invalid_auth"
         except PowerwallError as err:
-            LOGGER.debug("Local Powerwall verify failed at %s: %s", host, err)
+            LOGGER.warning("Local Powerwall verify failed at %s: %s", host, err)
             return "cannot_connect"
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Unexpected error verifying the Powerwall at %s", host)
+            return "unknown"
         return None
 
     @callback
