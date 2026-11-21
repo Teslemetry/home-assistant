@@ -8,6 +8,7 @@ from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any, override
 
+from bleak.exc import BleakError
 from tesla_fleet_api.const import VehicleDataEndpoint
 from tesla_fleet_api.exceptions import (
     GatewayTimeout,
@@ -22,6 +23,7 @@ from tesla_fleet_api.exceptions import (
 )
 from tesla_fleet_api.router import (
     LOCAL_SITE_INFO_KEYS,
+    VehicleRouter,
     merge_live_status,
     merge_site_info,
 )
@@ -30,7 +32,11 @@ from tesla_fleet_api.tesla.powerwall import (
     PowerwallEnergySite,
     PowerwallError,
 )
+from tesla_fleet_api.tesla.vehicle.bluetooth import VehicleBluetooth
 from tesla_fleet_api.teslemetry import EnergySite, Teslemetry, Vehicle
+
+# pylint: disable-next=no-name-in-module
+from tesla_protocol.command.vcsec_pb2 import VehicleSleepStatus_E, VehicleStatus
 from teslemetry_stream.const import EnergyTotalsEvent, WallConnectorTotalsEvent
 
 from homeassistant.core import HomeAssistant
@@ -44,7 +50,11 @@ from .const import DOMAIN, LOGGER
 from .helpers import async_update_device_sw_version, flatten, gateway_issue_id
 
 if TYPE_CHECKING:
-    from .models import TeslemetryConfigEntry
+    from .models import (
+        TeslemetryChargeOnSolarStore,
+        TeslemetryConfigEntry,
+        TeslemetryVehicleData,
+    )
 
 RETRY_EXCEPTIONS = (
     InvalidResponse,
@@ -65,6 +75,9 @@ def _get_retry_after(e: TeslaFleetError) -> float:
 VEHICLE_INTERVAL = timedelta(seconds=60)
 VEHICLE_WAIT = timedelta(minutes=15)
 METADATA_INTERVAL = timedelta(hours=1)
+# Longer than the 15 idle minutes a car needs to fall asleep, so the reads alone
+# do not keep an idle car awake.
+CHARGE_ON_SOLAR_INTERVAL = timedelta(minutes=20)
 # A paired Powerwall's LAN gateway is not on the stream, so it is polled: the
 # live document every 5s and the slower-changing config.json every 30s.
 ENERGY_LIVE_INTERVAL = timedelta(seconds=5)
@@ -207,6 +220,77 @@ class TeslemetryVehicleDataCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.vin, self.config_entry.entry_id, version.split(" ")[0]
             )
         return data
+
+
+class TeslemetryChargeOnSolarCoordinator(DataUpdateCoordinator[None]):
+    """Read a vehicle's charge-on-solar settings over Bluetooth.
+
+    The stream does not carry them and a cloud read is a paid command, so they
+    are only read over a Bluetooth link. A read that cannot be made keeps the
+    last known settings rather than failing the update.
+    """
+
+    config_entry: TeslemetryConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config_entry: TeslemetryConfigEntry,
+        api: VehicleRouter[VehicleBluetooth, Vehicle],
+        vehicle: TeslemetryVehicleData,
+        store: TeslemetryChargeOnSolarStore,
+    ) -> None:
+        """Initialize Teslemetry charge-on-solar coordinator."""
+        super().__init__(
+            hass,
+            LOGGER,
+            config_entry=config_entry,
+            name="Teslemetry Charge on solar",
+            update_interval=CHARGE_ON_SOLAR_INTERVAL,
+        )
+        self.api = api
+        self.vehicle = vehicle
+        self.store = store
+
+    @override
+    async def _async_update_data(self) -> None:
+        """Read the settings if the vehicle is in range and awake."""
+        # The range check also hands the Bluetooth backend its current device.
+        if not await self.api.is_healthy():
+            return
+        bluetooth = self.api.primary
+        # Held so a command cannot land between the read and storing its result.
+        async with self.vehicle.charge_on_solar_lock:
+            try:
+                # The read is an infotainment request, which the Bluetooth backend
+                # wakes a sleeping car to answer, so read only an awake car.
+                status = await bluetooth.vehicle_state()
+                # A VCSEC error comes back as a result dict instead of a status.
+                if (
+                    not isinstance(status, VehicleStatus)
+                    or status.vehicleSleepStatus
+                    != VehicleSleepStatus_E.VEHICLE_SLEEP_STATUS_AWAKE
+                ):
+                    return
+                response = await bluetooth.get_charge_on_solar()
+            except (BleakError, TeslaFleetError, TimeoutError) as e:
+                LOGGER.debug(
+                    "Bluetooth read of charge on solar for %s failed: %s",
+                    self.vehicle.vin,
+                    e,
+                )
+                return
+            if (
+                feature := response["response"].get("getChargeOnSolarFeatureResponse")
+            ) is None:
+                return
+            self.vehicle.charge_on_solar_enabled = feature.charge_on_solar.enabled
+            lower_limit = round(feature.charge_on_solar.lower_charge_limit)
+            # Capped like a sent lower limit, so the number shows what the switch sends.
+            if (charge_limit := self.vehicle.charge_limit_soc) is not None:
+                lower_limit = min(lower_limit, charge_limit)
+            self.vehicle.charge_on_solar_lower_limit = lower_limit
+            self.store.async_save(self.vehicle)
 
 
 def _index_wall_connectors(data: dict[str, Any]) -> dict[str, Any]:
