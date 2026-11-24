@@ -603,6 +603,9 @@
       }
     },
     "sensor": {
+      "ac_charging_energy_in": {
+        "name": "AC charging energy in"
+      },
       "battery_energy_exported": {
         "name": "Battery exported"
       },
