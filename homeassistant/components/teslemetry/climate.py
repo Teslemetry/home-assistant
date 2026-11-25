@@ -203,6 +203,7 @@ class TeslemetryClimateEntity(TeslemetryCabinClimateEntity):
                 )
             )
             self._attr_native_target_temperature = temp
+            self._native_passenger_temperature = passenger_temp
 
         if mode := kwargs.get(ATTR_HVAC_MODE):
             # Set HVAC mode will call write_ha_state

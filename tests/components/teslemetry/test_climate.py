@@ -1116,39 +1116,42 @@ async def test_passenger_climate_turn_on_off(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.parametrize(
-    ("passenger_set_point", "passenger_temp"),
+    ("passenger_set_point", "passenger_temps"),
     [
-        pytest.param(24, 24, id="split"),
-        pytest.param(22, 20, id="sync"),
-        pytest.param(None, 20, id="passenger_unknown"),
+        pytest.param(24, (24, 24), id="split"),
+        pytest.param(22, (20, 18), id="sync"),
+        pytest.param(None, (20, 18), id="passenger_unknown"),
     ],
 )
 async def test_climate_streaming_set_temperature_passenger(
     hass: HomeAssistant,
     mock_add_listener: AsyncMock,
     passenger_set_point: float | None,
-    passenger_temp: float,
+    passenger_temps: tuple[float, float],
 ) -> None:
     """Test the driver temperature keeps a split passenger temperature."""
     await setup_platform(hass, [Platform.CLIMATE])
     send_set_points(mock_add_listener, 22, passenger_set_point)
     await hass.async_block_till_done()
 
+    # The second set arrives before the vehicle reports the first one back
     with patch(
         "tesla_fleet_api.teslemetry.Vehicle.set_temps", return_value=COMMAND_OK
     ) as mock_set_temps:
-        await hass.services.async_call(
-            CLIMATE_DOMAIN,
-            ClimateService.SET_TEMPERATURE,
-            {
-                TargetKey.ENTITY_ID: ["climate.test_climate"],
-                ClimateServiceArgument.TEMPERATURE: 20,
-            },
-            blocking=True,
-        )
-    mock_set_temps.assert_called_once_with(
-        driver_temp=20, passenger_temp=passenger_temp
-    )
+        for temperature in (20, 18):
+            await hass.services.async_call(
+                CLIMATE_DOMAIN,
+                ClimateService.SET_TEMPERATURE,
+                {
+                    TargetKey.ENTITY_ID: ["climate.test_climate"],
+                    ClimateServiceArgument.TEMPERATURE: temperature,
+                },
+                blocking=True,
+            )
+    assert mock_set_temps.call_args_list == [
+        call(driver_temp=20, passenger_temp=passenger_temps[0]),
+        call(driver_temp=18, passenger_temp=passenger_temps[1]),
+    ]
 
 
 @pytest.mark.parametrize(
