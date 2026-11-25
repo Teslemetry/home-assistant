@@ -74,12 +74,19 @@ async def async_verify_local_gateway(
 ) -> None:
     """Prove the LAN connection and the RSA key against the gateway."""
     async with create_powerwall_client(hass, host, password, key_pem) as client:
-        await client.connect()
+        din = await client.connect()
+        # The part number tells a leader Powerwall from a Backup Gateway.
+        LOGGER.debug(
+            "Powerwall at %s accepted the password, part number %s",
+            host,
+            din.split("-", 1)[0],
+        )
         try:
             # connect() passed the password, so a failure here is key rejection.
             await client.get_status()
         except PowerwallAuthenticationError as err:
             raise PowerwallKeyRejectedError from err
+        LOGGER.info("Powerwall at %s verified for local control", host)
 
 
 async def async_get_ble_parent(hass: HomeAssistant) -> TeslaBluetooth:
