@@ -298,7 +298,8 @@ class TeslemetryEnergyLocalConfigEntity(
     ) -> None:
         """Initialize common aspects of a Teslemetry local config entity."""
 
-        assert data.local_config_coordinator
+        if TYPE_CHECKING:
+            assert data.local_config_coordinator
 
         self._attr_translation_key = key
         self._attr_unique_id = f"{data.id}-{key}"
