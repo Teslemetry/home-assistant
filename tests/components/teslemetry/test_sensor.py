@@ -1759,11 +1759,19 @@ async def test_local_status_sensors_poll_failure(
     assert state.state == "1.5"
 
 
-ISLANDER_KEYS = tuple(
-    key
-    for phase in (1, 2, 3)
-    for side in ("load", "main")
-    for key in (f"island_freq_l{phase}_{side}", f"island_voltage_l{phase}n_{side}")
+ISLANDER_KEYS = (
+    "island_freq_l1_load",
+    "island_voltage_l1n_load",
+    "island_freq_l1_main",
+    "island_voltage_l1n_main",
+    "island_freq_l2_load",
+    "island_voltage_l2n_load",
+    "island_freq_l2_main",
+    "island_voltage_l2n_main",
+    "island_freq_l3_load",
+    "island_voltage_l3n_load",
+    "island_freq_l3_main",
+    "island_voltage_l3n_main",
 )
 
 
@@ -1888,7 +1896,7 @@ async def test_local_islander_sensors_first_refresh_failure(
     mock_powerwall_status.return_value = POWERWALL_STATUS
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_ids["island_voltage_l1n_main"]))
     assert state.state == "240.5"
@@ -1909,7 +1917,7 @@ async def test_local_islander_sensors_poll_failure(
     mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == STATE_UNAVAILABLE
@@ -1922,7 +1930,7 @@ async def test_local_islander_sensors_poll_failure(
     mock_powerwall_status.return_value = status
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == "0.0"
