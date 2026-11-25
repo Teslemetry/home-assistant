@@ -1770,11 +1770,19 @@ async def test_local_status_sensors_poll_failure(
     assert state.state == "1.5"
 
 
-ISLANDER_KEYS = tuple(
-    key
-    for phase in (1, 2, 3)
-    for side in ("load", "main")
-    for key in (f"island_freq_l{phase}_{side}", f"island_voltage_l{phase}n_{side}")
+ISLANDER_KEYS = (
+    "island_freq_l1_load",
+    "island_voltage_l1n_load",
+    "island_freq_l1_main",
+    "island_voltage_l1n_main",
+    "island_freq_l2_load",
+    "island_voltage_l2n_load",
+    "island_freq_l2_main",
+    "island_voltage_l2n_main",
+    "island_freq_l3_load",
+    "island_voltage_l3n_load",
+    "island_freq_l3_main",
+    "island_voltage_l3n_main",
 )
 
 
@@ -1899,7 +1907,7 @@ async def test_local_islander_sensors_first_refresh_failure(
     mock_powerwall_status.return_value = POWERWALL_STATUS
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_ids["island_voltage_l1n_main"]))
     assert state.state == "240.5"
@@ -1920,7 +1928,7 @@ async def test_local_islander_sensors_poll_failure(
     mock_powerwall_status.side_effect = PowerwallConnectionError("offline")
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == STATE_UNAVAILABLE
@@ -1933,7 +1941,7 @@ async def test_local_islander_sensors_poll_failure(
     mock_powerwall_status.return_value = status
     freezer.tick(LOCAL_STATUS_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == "0.0"
@@ -2057,7 +2065,7 @@ async def test_local_config_sensors_first_refresh_failure(
     mock_powerwall_config.return_value = POWERWALL_CONFIG
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_ids["country"]))
     assert state.state == "Australia"
@@ -2079,7 +2087,7 @@ async def test_local_config_sensors_poll_failure(
     mock_powerwall_config.side_effect = PowerwallConnectionError("offline")
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == STATE_UNAVAILABLE
@@ -2090,7 +2098,7 @@ async def test_local_config_sensors_poll_failure(
     mock_powerwall_config.return_value = config
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == "Ergon Energy"
@@ -2204,6 +2212,32 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
     assert "does not generate unique IDs" not in caplog.text
     (subentry_id,) = entry.subentries
     assert entity_registry.async_get(entity_ids[0]).config_subentry_id == subentry_id
+
+
+async def test_local_unit_sensor_missing_signal(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_components: AsyncMock,
+) -> None:
+    """Test a battery unit sensor is not created when the gateway lacks its signal."""
+    components = deepcopy(POWERWALL_COMPONENTS)
+    bms = components["components"]["bms"][0]
+    bms["signals"] = [
+        signal
+        for signal in bms["signals"]
+        if signal["name"] != "BMS_nominalEnergyRemaining"
+    ]
+    mock_powerwall_components.side_effect = None
+    mock_powerwall_components.return_value = components
+
+    await setup_paired_platform(hass, [Platform.SENSOR])
+
+    assert not entity_registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{SITE_ID}-{LEADER_DIN}-energy_remaining"
+    )
+    assert entity_registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{SITE_ID}-{LEADER_DIN}-full_pack_energy"
+    )
 
 
 async def test_local_unit_without_serial_skipped(
