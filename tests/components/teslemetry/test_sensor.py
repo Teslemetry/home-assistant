@@ -2191,11 +2191,15 @@ async def test_local_unit_percentage_charged(
     assert float(hass.states.get(entity_id).state) == pytest.approx(73.0929, abs=1e-4)
 
     components = deepcopy(POWERWALL_COMPONENTS)
-    for signal in components["components"]["bms"][0]["signals"]:
-        if signal["name"] == "BMS_nominalEnergyRemaining":
-            signal["value"] = remaining
-        elif signal["name"] == "BMS_nominalFullPackEnergy":
-            signal["value"] = full_pack
+    bms = components["components"]["bms"][0]
+    values = {
+        "BMS_nominalEnergyRemaining": remaining,
+        "BMS_nominalFullPackEnergy": full_pack,
+    }
+    bms["signals"] = [
+        {**signal, "value": values.get(signal["name"], signal["value"])}
+        for signal in bms["signals"]
+    ]
     mock_powerwall_components.side_effect = None
     mock_powerwall_components.return_value = components
     freezer.tick(LOCAL_COMPONENTS_INTERVAL)
