@@ -1690,6 +1690,13 @@ class TeslemetryLocalSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], StateType]
 
 
+ROADSTER_BATTERY_DESCRIPTION = SensorEntityDescription(
+    key="roadster_battery",
+    device_class=SensorDeviceClass.BATTERY,
+    native_unit_of_measurement=PERCENTAGE,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+
 PV_STRINGS = ("A", "B", "C", "D", "E", "F")
 
 ENERGY_LOCAL_COMPONENTS_DESCRIPTIONS: tuple[
@@ -2261,14 +2268,12 @@ class TeslemetryRoadsterBatterySensorEntity(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, roadster: TeslemetryRoadsterData, entry_id: str) -> None:
         """Initialize the Roadster battery sensor."""
         self.roadster = roadster
-        self._attr_unique_id = f"{entry_id}_roadster_battery"
+        self.entity_description = ROADSTER_BATTERY_DESCRIPTION
+        self._attr_unique_id = f"{entry_id}_{ROADSTER_BATTERY_DESCRIPTION.key}"
         self._attr_device_info = roadster.device
 
     @property

@@ -53,20 +53,26 @@ class TeslemetryRoadsterData:
 
     device: DeviceInfo
     battery_level: int = 100
-    _listeners: list[CALLBACK_TYPE] = field(default_factory=list)
+    # The battery sensor is the only listener
+    _listener: CALLBACK_TYPE | None = None
 
     @callback
     def async_add_listener(self, update_callback: CALLBACK_TYPE) -> CALLBACK_TYPE:
         """Listen for battery level changes."""
-        self._listeners.append(update_callback)
-        return lambda: self._listeners.remove(update_callback)
+        self._listener = update_callback
+
+        @callback
+        def _remove_listener() -> None:
+            self._listener = None
+
+        return _remove_listener
 
     @callback
     def async_set_battery_level(self, battery_level: int) -> None:
-        """Set the battery level and notify listeners."""
+        """Set the battery level and notify the listener."""
         self.battery_level = battery_level
-        for update_callback in self._listeners:
-            update_callback()
+        if self._listener is not None:
+            self._listener()
 
 
 @dataclass
