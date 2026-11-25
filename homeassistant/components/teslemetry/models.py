@@ -142,9 +142,8 @@ class TeslemetryEnergyData:
     def match_battery_units(self) -> dict[str, BatteryUnit] | None:
         """Return the battery units of a paired site, matched once the gateway answered.
 
-        The status, components and config documents refresh on different
-        intervals, so the units are matched once from the first refresh of both
-        coordinators.
+        The status and components documents refresh on different intervals, so
+        the units are matched once, when both have answered.
         """
         status = self.local_status_coordinator
         components = self.local_components_coordinator
