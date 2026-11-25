@@ -118,7 +118,7 @@
     'last_changed': <ANY>,
     'last_reported': <ANY>,
     'last_updated': <ANY>,
-    'state': '1000000000',
+    'state': 'unknown',
   })
 # ---
 # name: test_number[number.energy_site_grid_import_limit-entry]
@@ -179,7 +179,7 @@
     'last_changed': <ANY>,
     'last_reported': <ANY>,
     'last_updated': <ANY>,
-    'state': '1000000000',
+    'state': 'unknown',
   })
 # ---
 # name: test_number[number.energy_site_off_grid_reserve-entry]

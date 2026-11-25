@@ -31,7 +31,7 @@ from homeassistant.components.teslemetry.coordinator import (
 from homeassistant.components.teslemetry.number import (
     TeslemetryChargeOnSolarLowerLimitNumberEntity,
 )
-from homeassistant.const import Platform, TargetKey
+from homeassistant.const import STATE_UNKNOWN, Platform, TargetKey
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -1085,19 +1085,34 @@ async def test_grid_limit_number_cloud(
     assert hass.states.get(entity_id).state == expected_state
 
 
+@pytest.mark.parametrize(
+    ("export_limit", "import_limit", "export_state", "import_state"),
+    [
+        pytest.param(-5, 14, "5", "14", id="limited"),
+        pytest.param(
+            -1000000000, 1000000000, STATE_UNKNOWN, STATE_UNKNOWN, id="no_limit"
+        ),
+        pytest.param(None, None, STATE_UNKNOWN, STATE_UNKNOWN, id="not_reported"),
+    ],
+)
 async def test_grid_limit_number_value_from_site_info(
-    hass: HomeAssistant, mock_site_info: AsyncMock
+    hass: HomeAssistant,
+    mock_site_info: AsyncMock,
+    export_limit: int | None,
+    import_limit: int | None,
+    export_state: str,
+    import_state: str,
 ) -> None:
     """Test the grid limits show the site_info limits as positive kW."""
     site_info = deepcopy(SITE_INFO)
-    site_info["response"]["min_site_meter_power_ac"] = -5
-    site_info["response"]["max_site_meter_power_ac"] = 14
+    site_info["response"]["min_site_meter_power_ac"] = export_limit
+    site_info["response"]["max_site_meter_power_ac"] = import_limit
     mock_site_info.side_effect = None
     mock_site_info.return_value = site_info
     await setup_platform(hass, [Platform.NUMBER])
 
-    assert hass.states.get("number.energy_site_grid_export_limit").state == "5"
-    assert hass.states.get("number.energy_site_grid_import_limit").state == "14"
+    assert hass.states.get("number.energy_site_grid_export_limit").state == export_state
+    assert hass.states.get("number.energy_site_grid_import_limit").state == import_state
 
 
 @pytest.mark.parametrize(

@@ -418,7 +418,11 @@ class TeslemetryEnergyGridLimitNumberEntity(TeslemetryEnergyInfoEntity, NumberEn
     @override
     def _async_update_attrs(self) -> None:
         """Update the attributes of the entity."""
-        self._attr_native_value = None if self._value is None else abs(self._value)
+        # site_info reports +/-1000000000 when no limit is set
+        if self._value is None or abs(self._value) > self.native_max_value:
+            self._attr_native_value = None
+        else:
+            self._attr_native_value = abs(self._value)
 
     @override
     async def async_set_native_value(self, value: float) -> None:
