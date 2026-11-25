@@ -2236,7 +2236,6 @@ SITE_ID = 123456
 WALL_CONNECTOR_SITE_ID = 555555
 HOST = "192.168.91.1"
 PASSWORD = "abcde"
-# Matches the paired site's `gateway_id` in the products fixture.
 GATEWAY_DIN = "1707000-11-L--TG1234567890AB"
 PUBLIC_KEY_DER = b"public-key-der"
 PUBLIC_KEY_B64 = "cHVibGljLWtleS1kZXI="
