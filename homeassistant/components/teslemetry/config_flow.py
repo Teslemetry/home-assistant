@@ -228,17 +228,11 @@ class OAuth2FlowHandler(
         return await self.async_step_user()
 
 
-class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
-    FlowHandler[Any, _ResultT, Any]
-):
-    """Bluetooth pairing steps shared by the flows that add a vehicle."""
-
-    # The steps return the reusing flow's result type, which the checker cannot match.
-    # pylint: disable=home-assistant-return-type
+class VehicleSubentryFlowHandler(ConfigSubentryFlow):
+    """Add local Bluetooth control to one of the account's vehicles."""
 
     def __init__(self) -> None:
-        """Initialize the vehicle pairing state."""
-        super().__init__()
+        """Initialize the vehicle subentry flow."""
         self._vin: str | None = None
         self._title: str | None = None
         self._address: str | None = None
@@ -247,9 +241,64 @@ class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
         self._pair_error: dict[str, str] = {}
         self._key_added = False
 
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Select an account vehicle to add over Bluetooth, then pair it."""
+        if not async_scanner_count(self.hass, connectable=True):
+            return self.async_abort(reason="bluetooth_not_available")
+        entry = self._get_entry()
+        if entry.state is not ConfigEntryState.LOADED:
+            return self.async_abort(reason="entry_not_loaded")
+        already_added = {
+            subentry.data[CONF_VIN]
+            for subentry in entry.get_subentries_of_type(SUBENTRY_TYPE_VEHICLE)
+            if CONF_VIN in subentry.data
+        }
+        vehicle_metadata = entry.runtime_data.metadata_coordinator.data["vehicles"]
+        choices = {
+            vehicle.vin: vehicle.device.name or vehicle.vin
+            for vehicle in entry.runtime_data.vehicles
+            if vehicle.vin not in already_added
+            # Vehicles without the command protocol (pre-2021 Model S/X) report
+            # False and cannot be controlled over Bluetooth; None or a VIN not
+            # yet in the metadata means unknown.
+            and vehicle_metadata.get(vehicle.vin, {}).get("proxy") is not False
+        }
+        if not choices:
+            if not entry.runtime_data.vehicles:
+                return self.async_abort(reason="no_vehicles")
+            if any(
+                vehicle.vin not in already_added
+                for vehicle in entry.runtime_data.vehicles
+            ):
+                return self.async_abort(reason="no_supported_vehicles")
+            return self.async_abort(reason="all_vehicles_added")
+
+        if user_input is not None:
+            self._vin = user_input[CONF_VIN]
+            self._title = choices[self._vin]
+            return await self.async_step_scan()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=probatio.Schema(
+                {probatio.Required(CONF_VIN): probatio.In(choices)}
+            ),
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Re-run Bluetooth pairing for an already added vehicle."""
+        if not async_scanner_count(self.hass, connectable=True):
+            return self.async_abort(reason="bluetooth_not_available")
+        self._vin = self._get_reconfigure_subentry().data[CONF_VIN]
+        return await self.async_step_scan()
+
     async def async_step_scan(
         self, user_input: dict[str, Any] | None = None
-    ) -> _ResultT:
+    ) -> SubentryFlowResult:
         """Find the vehicle over Bluetooth and connect to it."""
         if TYPE_CHECKING:
             assert self._vin is not None
@@ -367,7 +416,7 @@ class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
 
     async def async_step_pair(
         self, user_input: dict[str, Any] | None = None
-    ) -> _ResultT:
+    ) -> SubentryFlowResult:
         """Check whether the virtual key is already whitelisted on the vehicle."""
         if TYPE_CHECKING:
             assert self._vehicle is not None
@@ -394,11 +443,26 @@ class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
             assert self._address is not None
             assert self._vin is not None
         self._vehicle = None
-        return self._async_vehicle_paired(self._vin, self._address)
+        if self.source == SOURCE_RECONFIGURE:
+            entry = self._get_entry()
+            result = self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                data_updates={CONF_ADDRESS: self._address},
+            )
+            # Reload manually: the update listener only reloads on subentry add or
+            # remove, and async_update_reload_and_abort raises while a listener is set.
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+            return result
+        return self.async_create_entry(
+            title=self._title or self._vin,
+            data={CONF_VIN: self._vin, CONF_ADDRESS: self._address},
+            unique_id=self._vin,
+        )
 
     async def async_step_instructions(
         self, user_input: dict[str, Any] | None = None
-    ) -> _ResultT:
+    ) -> SubentryFlowResult:
         """Ask the user to approve the virtual key on the vehicle touchscreen."""
         if user_input is not None:
             return await self.async_step_authorize()
@@ -412,7 +476,7 @@ class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
 
     async def async_step_authorize(
         self, user_input: dict[str, Any] | None = None
-    ) -> _ResultT:
+    ) -> SubentryFlowResult:
         """Add the virtual key to the vehicle while showing pairing progress."""
         if self._pair_task is None:
             # pair() can take minutes, so run it as a progress task rather than blocking the flow.
@@ -496,93 +560,6 @@ class VehiclePairingFlow[_ResultT: FlowResult[Any, Any]](
             self._pair_task.cancel()
         elif self._vehicle is not None:
             self.hass.async_create_task(self._async_disconnect())
-
-    @callback
-    def _async_vehicle_paired(self, vin: str, address: str) -> _ResultT:
-        """Finish the flow once the virtual key is verified on the vehicle."""
-        raise NotImplementedError
-
-
-class VehicleSubentryFlowHandler(
-    VehiclePairingFlow[SubentryFlowResult], ConfigSubentryFlow
-):
-    """Add local Bluetooth control to one of the account's vehicles."""
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Select an account vehicle to add over Bluetooth, then pair it."""
-        if not async_scanner_count(self.hass, connectable=True):
-            return self.async_abort(reason="bluetooth_not_available")
-        entry = self._get_entry()
-        if entry.state is not ConfigEntryState.LOADED:
-            return self.async_abort(reason="entry_not_loaded")
-        already_added = {
-            subentry.data[CONF_VIN]
-            for subentry in entry.get_subentries_of_type(SUBENTRY_TYPE_VEHICLE)
-            if CONF_VIN in subentry.data
-        }
-        vehicle_metadata = entry.runtime_data.metadata_coordinator.data["vehicles"]
-        choices = {
-            vehicle.vin: vehicle.device.name or vehicle.vin
-            for vehicle in entry.runtime_data.vehicles
-            if vehicle.vin not in already_added
-            # Vehicles without the command protocol (pre-2021 Model S/X) report
-            # False and cannot be controlled over Bluetooth; None or a VIN not
-            # yet in the metadata means unknown.
-            and vehicle_metadata.get(vehicle.vin, {}).get("proxy") is not False
-        }
-        if not choices:
-            if not entry.runtime_data.vehicles:
-                return self.async_abort(reason="no_vehicles")
-            if any(
-                vehicle.vin not in already_added
-                for vehicle in entry.runtime_data.vehicles
-            ):
-                return self.async_abort(reason="no_supported_vehicles")
-            return self.async_abort(reason="all_vehicles_added")
-
-        if user_input is not None:
-            self._vin = user_input[CONF_VIN]
-            self._title = choices[self._vin]
-            return await self.async_step_scan()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=probatio.Schema(
-                {probatio.Required(CONF_VIN): probatio.In(choices)}
-            ),
-        )
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Re-run Bluetooth pairing for an already added vehicle."""
-        if not async_scanner_count(self.hass, connectable=True):
-            return self.async_abort(reason="bluetooth_not_available")
-        self._vin = self._get_reconfigure_subentry().data[CONF_VIN]
-        return await self.async_step_scan()
-
-    @callback
-    @override
-    def _async_vehicle_paired(self, vin: str, address: str) -> SubentryFlowResult:
-        """Create the vehicle subentry, or update its address on reconfigure."""
-        if self.source == SOURCE_RECONFIGURE:
-            entry = self._get_entry()
-            result = self.async_update_and_abort(
-                entry,
-                self._get_reconfigure_subentry(),
-                data_updates={CONF_ADDRESS: address},
-            )
-            # Reload manually: the update listener only reloads on subentry add or
-            # remove, and async_update_reload_and_abort raises while a listener is set.
-            self.hass.config_entries.async_schedule_reload(entry.entry_id)
-            return result
-        return self.async_create_entry(
-            title=self._title or vin,
-            data={CONF_VIN: vin, CONF_ADDRESS: address},
-            unique_id=vin,
-        )
 
 
 def _energy_site_name(energy_data: TeslemetryEnergyData) -> str | None:
