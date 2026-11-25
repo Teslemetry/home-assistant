@@ -212,9 +212,6 @@ class GatewayNotFoundRepairFlow(RepairsFlow):
         except PowerwallError as err:
             LOGGER.warning("Local Powerwall verify failed at %s: %s", host, err)
             return "cannot_connect"
-        except Exception:  # noqa: BLE001
-            LOGGER.exception("Unexpected error verifying the Powerwall at %s", host)
-            return "unknown"
         return None
 
     @callback

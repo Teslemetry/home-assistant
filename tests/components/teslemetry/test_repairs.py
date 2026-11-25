@@ -649,13 +649,6 @@ async def test_gateway_repair_fixed_through_cloud(
             "Powerwall rejected the signed read: unapproved",
             id="key_not_approved",
         ),
-        pytest.param(
-            AttributeError("boom"),
-            None,
-            "unknown",
-            f"Unexpected error verifying the Powerwall at {MANUAL_HOST}",
-            id="unknown",
-        ),
     ],
 )
 async def test_gateway_repair_manual_address(

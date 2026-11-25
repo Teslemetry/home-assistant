@@ -2576,12 +2576,6 @@ async def test_subentry_lookup_failure_recovers(
             f"Local Powerwall verify failed at {HOST}",
             id="signed_read_unreachable",
         ),
-        pytest.param(
-            {"connect_error": AttributeError("boom")},
-            "unknown",
-            f"Unexpected error verifying the Powerwall at {HOST}",
-            id="unexpected_error",
-        ),
     ],
 )
 async def test_subentry_credentials_errors(

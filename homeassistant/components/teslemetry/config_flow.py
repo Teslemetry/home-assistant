@@ -848,9 +848,6 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
             except PowerwallError as err:
                 LOGGER.warning("Local Powerwall verify failed at %s: %s", host, err)
                 errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("Unexpected error verifying the Powerwall at %s", host)
-                errors["base"] = "unknown"
             else:
                 return self._async_save_credentials(host, password)
 
