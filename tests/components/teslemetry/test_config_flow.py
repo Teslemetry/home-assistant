@@ -3741,6 +3741,7 @@ async def test_reconfigure_registers_key_via_cloud_not_local_gateway(
 DHCP_DISCOVERY = DhcpServiceInfo(
     ip=HOST, hostname="teslapw_abcdef", macaddress="009b08a3c371"
 )
+MOVED_HOST = "192.168.91.5"
 
 
 async def _start_dhcp_flow(hass: HomeAssistant) -> ConfigFlowResult:
@@ -3836,19 +3837,56 @@ async def test_dhcp_discovery_without_loaded_account(
     mock_gateway_discovery.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("discovered_ip", "cloud_address", "reason", "host", "lookups", "reloads"),
+    [
+        pytest.param(HOST, None, "already_configured", HOST, 0, 0, id="same_address"),
+        pytest.param(
+            MOVED_HOST,
+            MOVED_HOST,
+            "already_configured",
+            MOVED_HOST,
+            1,
+            1,
+            id="moved_gateway",
+        ),
+        pytest.param(
+            MOVED_HOST, HOST, "no_matching_site", HOST, 1, 0, id="other_gateway"
+        ),
+    ],
+)
 async def test_dhcp_discovery_site_already_added(
-    hass: HomeAssistant, mock_gateway_discovery: AsyncMock
+    hass: HomeAssistant,
+    mock_gateway_discovery: AsyncMock,
+    discovered_ip: str,
+    cloud_address: str | None,
+    reason: str,
+    host: str,
+    lookups: int,
+    reloads: int,
 ) -> None:
-    """A site that already has local control is not offered again."""
-    await _setup_paired_account(hass)
+    """A site that already has local control follows its gateway's new address."""
+    entry = await _setup_paired_account(hass)
     mock_gateway_discovery.reset_mock()
-    mock_gateway_discovery.return_value = HOST
+    mock_gateway_discovery.return_value = cloud_address
 
-    result = await _start_dhcp_flow(hass)
+    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_DHCP},
+            data=DhcpServiceInfo(
+                ip=discovered_ip,
+                hostname=DHCP_DISCOVERY.hostname,
+                macaddress=DHCP_DISCOVERY.macaddress,
+            ),
+        )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_matching_site"
-    mock_gateway_discovery.assert_not_awaited()
+    assert result["reason"] == reason
+    subentry = entry.get_subentries_of_type(SUBENTRY_TYPE_ENERGY_SITE)[0]
+    assert subentry.data[CONF_HOST] == host
+    assert mock_gateway_discovery.await_count == lookups
+    assert mock_reload.call_count == reloads
 
 
 async def test_dhcp_discovery_ignored_gateway(

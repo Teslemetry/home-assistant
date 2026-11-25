@@ -932,17 +932,20 @@ class OAuth2FlowHandler(
         self._abort_if_unique_id_configured()
 
         for entry in self.hass.config_entries.async_loaded_entries(DOMAIN):
-            added_site_ids = {
-                subentry.unique_id
+            added_sites = {
+                subentry.unique_id: subentry
                 for subentry in entry.subentries.values()
                 if subentry.subentry_type == SUBENTRY_TYPE_ENERGY_SITE
             }
             for energy_data in entry.runtime_data.energysites:
-                if (
-                    not energy_data.can_local_control
-                    or str(energy_data.id) in added_site_ids
-                ):
+                if not energy_data.can_local_control:
                     continue
+                subentry = added_sites.get(str(energy_data.id))
+                if (
+                    subentry is not None
+                    and subentry.data[CONF_HOST] == discovery_info.ip
+                ):
+                    return self.async_abort(reason="already_configured")
                 try:
                     host = await cloud_energy_site(
                         energy_data.api
@@ -955,13 +958,20 @@ class OAuth2FlowHandler(
                     )
                     continue
                 # Powerwall 3 hostnames do not carry the DIN, so match on the address.
-                if host == discovery_info.ip:
-                    self._entry = entry
-                    self._energy_data = energy_data
-                    self._site_id = energy_data.id
-                    self._site_name = _energy_site_name(energy_data) or "Energy Site"
-                    self.context["title_placeholders"] = {"name": self._site_name}
-                    return await self.async_step_dhcp_confirm()
+                if host != discovery_info.ip:
+                    continue
+                if subentry is not None:
+                    self.hass.config_entries.async_update_subentry(
+                        entry, subentry, data={**subentry.data, CONF_HOST: host}
+                    )
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                    return self.async_abort(reason="already_configured")
+                self._entry = entry
+                self._energy_data = energy_data
+                self._site_id = energy_data.id
+                self._site_name = _energy_site_name(energy_data) or "Energy Site"
+                self.context["title_placeholders"] = {"name": self._site_name}
+                return await self.async_step_dhcp_confirm()
 
         return self.async_abort(reason="no_matching_site")
 
