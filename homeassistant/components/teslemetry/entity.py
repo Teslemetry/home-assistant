@@ -1,7 +1,7 @@
 """Teslemetry parent entity class."""
 
 from abc import abstractmethod
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
 
 from tesla_fleet_api.const import Scope
 from tesla_fleet_api.router import VehicleRouter
@@ -297,7 +297,8 @@ class TeslemetryEnergyLocalConfigEntity(
     ) -> None:
         """Initialize common aspects of a Teslemetry local config entity."""
 
-        assert data.local_config_coordinator
+        if TYPE_CHECKING:
+            assert data.local_config_coordinator
 
         self._attr_translation_key = key
         self._attr_unique_id = f"{data.id}-{key}"

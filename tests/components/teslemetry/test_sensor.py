@@ -2054,7 +2054,7 @@ async def test_local_config_sensors_first_refresh_failure(
     mock_powerwall_config.return_value = POWERWALL_CONFIG
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_ids["country"]))
     assert state.state == "Australia"
@@ -2076,7 +2076,7 @@ async def test_local_config_sensors_poll_failure(
     mock_powerwall_config.side_effect = PowerwallConnectionError("offline")
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == STATE_UNAVAILABLE
@@ -2087,7 +2087,7 @@ async def test_local_config_sensors_poll_failure(
     mock_powerwall_config.return_value = config
     freezer.tick(LOCAL_CONFIG_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert (state := hass.states.get(entity_id))
     assert state.state == "Ergon Energy"
