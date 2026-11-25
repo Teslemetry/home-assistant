@@ -91,6 +91,17 @@ LOCAL_UNIT_KEYS = ("energy_remaining", "full_pack_energy")
 LEADER_DIN = "1707000-30-L--TG10000000000A"
 # Powerwalls are keyed by DIN and expansions by serial number.
 LOCAL_UNIT_IDS = (LEADER_DIN, "TG10000000002C", "TG10000000003D")
+POWERWALL_3_KEYS = (
+    "battery_power",
+    "ac_power",
+    "ac_voltage_ab",
+    "ac_voltage_an",
+    "ac_voltage_bn",
+    "ac_frequency",
+    "pch_state",
+    "pch_firmware",
+    "pws_firmware",
+)
 
 # Per-tire TPMS warning objects including the Tesla Semi.
 TPMS_NO_WARNINGS = {
@@ -2382,27 +2393,16 @@ async def test_local_powerwall_3_sensors(
     """Test the Powerwall 3 PCH and PWS sensors go on the Powerwall 3 device only."""
     entry = await setup_paired_platform(hass, [Platform.SENSOR])
 
-    keys = (
-        "battery_power",
-        "ac_power",
-        "ac_voltage_ab",
-        "ac_voltage_an",
-        "ac_voltage_bn",
-        "ac_frequency",
-        "pch_state",
-        "pch_firmware",
-        "pws_firmware",
-    )
     entries = {
         entity.unique_id: entity
         for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id)
         if entity.unique_id.startswith(
             tuple(f"{SITE_ID}-{unit_id}-" for unit_id in LOCAL_UNIT_IDS)
         )
-        and entity.unique_id.endswith(keys)
+        and entity.unique_id.endswith(POWERWALL_3_KEYS)
     }
     # Expansions have no PCH, so they get none of these sensors.
-    assert sorted(entries) == sorted(f"{SITE_ID}-{LEADER_DIN}-{key}" for key in keys)
+    assert sorted(entries) == sorted(f"{SITE_ID}-{LEADER_DIN}-{key}" for key in POWERWALL_3_KEYS)
     (subentry_id,) = entry.subentries
     for entity in entries.values():
         assert entity == snapshot(name=f"{entity.entity_id}-entry")
@@ -2419,22 +2419,11 @@ async def test_local_powerwall_3_sensors_enabled_by_default(
     """Test only the Powerwall 3 battery and AC real power are enabled by default."""
     entry = await setup_paired_platform(hass, [Platform.SENSOR])
 
-    keys = (
-        "battery_power",
-        "ac_power",
-        "ac_voltage_ab",
-        "ac_voltage_an",
-        "ac_voltage_bn",
-        "ac_frequency",
-        "pch_state",
-        "pch_firmware",
-        "pws_firmware",
-    )
     assert {
         entity.unique_id
         for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id)
         if entity.unique_id.startswith(f"{SITE_ID}-{LEADER_DIN}-")
-        and entity.unique_id.endswith(keys)
+        and entity.unique_id.endswith(POWERWALL_3_KEYS)
         and not entity.disabled
     } == {
         f"{SITE_ID}-{LEADER_DIN}-battery_power",
