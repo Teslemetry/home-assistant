@@ -17,7 +17,6 @@ from homeassistant.components.number import (
 from homeassistant.const import PERCENTAGE, PRECISION_WHOLE, UnitOfElectricCurrent
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.icon import icon_for_battery_level
 
 from . import TeslaFleetConfigEntry
 from .entity import TeslaFleetEnergyInfoEntity, TeslaFleetVehicleEntity
@@ -196,7 +195,6 @@ class TeslaFleetEnergyInfoNumberSensorEntity(TeslaFleetEnergyInfoEntity, NumberE
     def _async_update_attrs(self) -> None:
         """Update the attributes of the entity."""
         self._attr_native_value = self._value
-        self._attr_icon = icon_for_battery_level(self.native_value)
 
     @override
     async def async_set_native_value(self, value: float) -> None:
