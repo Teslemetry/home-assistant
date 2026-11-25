@@ -1125,9 +1125,12 @@ async def _async_listen_stream(
         async_expire_token(hass, entry)
         try:
             await oauth_session.async_ensure_token_valid()
-        except OAuth2TokenRequestBaseError:
-            entry.async_start_reauth(hass)
+        except OAuth2TokenRequestReauthError:
+            # The session has already started reauth.
             return
+        except OAuth2TokenRequestBaseError:
+            # Reconnecting retries the refresh, and the stream backs off on its errors.
+            continue
         refreshed_token = oauth_session.token[CONF_ACCESS_TOKEN]
 
 
