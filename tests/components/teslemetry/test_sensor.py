@@ -2214,6 +2214,32 @@ async def test_local_unit_devices_kept_while_gateway_unreachable(
     assert entity_registry.async_get(entity_ids[0]).config_subentry_id == subentry_id
 
 
+async def test_local_unit_sensor_missing_signal(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_powerwall_components: AsyncMock,
+) -> None:
+    """Test a battery unit sensor is not created when the gateway lacks its signal."""
+    components = deepcopy(POWERWALL_COMPONENTS)
+    bms = components["components"]["bms"][0]
+    bms["signals"] = [
+        signal
+        for signal in bms["signals"]
+        if signal["name"] != "BMS_nominalEnergyRemaining"
+    ]
+    mock_powerwall_components.side_effect = None
+    mock_powerwall_components.return_value = components
+
+    await setup_paired_platform(hass, [Platform.SENSOR])
+
+    assert not entity_registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{SITE_ID}-{LEADER_DIN}-energy_remaining"
+    )
+    assert entity_registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{SITE_ID}-{LEADER_DIN}-full_pack_energy"
+    )
+
+
 async def test_local_unit_without_serial_skipped(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,
