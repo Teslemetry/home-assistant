@@ -674,12 +674,10 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
         energy_site = cast(TeslemetryEnergySite | EnergySiteRouter, energy_data.api)
         self._energy_site = energy_site
 
+        networks = await async_get_local_networks(self.hass)
         try:
             self._discovered_host = (
-                await energy_site.find_gateway_address(
-                    await async_get_local_networks(self.hass)
-                )
-                or ""
+                await energy_site.find_gateway_address(networks) or ""
             )
         except (ClientError, TeslaFleetError) as err:
             LOGGER.warning("Gateway address discovery failed: %s", err)
