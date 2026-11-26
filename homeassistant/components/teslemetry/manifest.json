@@ -5,7 +5,7 @@
   "codeowners": ["@Bre77"],
   "config_flow": true,
   "connectivity": ["bluetooth", "cloud", "network"],
-  "dependencies": ["application_credentials", "bluetooth_adapters"],
+  "dependencies": ["application_credentials", "bluetooth_adapters", "network"],
   "documentation": "https://www.home-assistant.io/integrations/teslemetry",
   "integration_type": "hub",
   "iot_class": "cloud_polling",

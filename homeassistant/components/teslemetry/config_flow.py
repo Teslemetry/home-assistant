@@ -81,6 +81,7 @@ from .const import (
 from .helpers import (
     PowerwallKeyRejectedError,
     async_get_ble_parent,
+    async_get_local_networks,
     async_verify_local_gateway,
     cloud_energy_site,
 )
@@ -673,8 +674,11 @@ class EnergySiteSubentryFlowHandler(ConfigSubentryFlow):
         energy_site = cast(TeslemetryEnergySite | EnergySiteRouter, energy_data.api)
         self._energy_site = energy_site
 
+        networks = await async_get_local_networks(self.hass)
         try:
-            self._discovered_host = await energy_site.find_gateway_address() or ""
+            self._discovered_host = (
+                await energy_site.find_gateway_address(networks) or ""
+            )
         except (ClientError, TeslaFleetError) as err:
             LOGGER.warning("Gateway address discovery failed: %s", err)
             self._discovered_host = ""
