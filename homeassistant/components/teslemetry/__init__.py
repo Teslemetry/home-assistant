@@ -104,6 +104,7 @@ from .const import (
     VEHICLE_ISSUE_LEARN_MORE,
 )
 from .coordinator import (
+    TeslemetryChargeOnSolarCoordinator,
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
@@ -732,6 +733,18 @@ async def _async_setup_charge_on_solar(
     ):
         store = TeslemetryChargeOnSolarStore(hass, entry.entry_id)
         await store.async_load(vehicles)
+        for vehicle in vehicles:
+            # Only a Bluetooth router can read the settings without a paid command.
+            if isinstance(vehicle.api, VehicleRouter):
+                coordinator = TeslemetryChargeOnSolarCoordinator(
+                    hass, entry, vehicle.api, vehicle, store
+                )
+                vehicle.charge_on_solar_coordinator = coordinator
+                entry.async_create_background_task(
+                    hass,
+                    coordinator.async_refresh(),
+                    f"Teslemetry charge-on-solar read {vehicle.vin}",
+                )
         return store
 
     entity_registry = er.async_get(hass)

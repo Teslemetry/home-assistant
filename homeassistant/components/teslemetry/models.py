@@ -19,6 +19,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import CHARGE_ON_SOLAR_LOWER_LIMIT_DEFAULT, DOMAIN
 from .coordinator import (
+    TeslemetryChargeOnSolarCoordinator,
     TeslemetryEnergyHistoryCoordinator,
     TeslemetryEnergySiteInfoCoordinator,
     TeslemetryEnergySiteLiveCoordinator,
@@ -68,6 +69,7 @@ class TeslemetryVehicleData:
     charge_on_solar_lower_limit: int = CHARGE_ON_SOLAR_LOWER_LIMIT_DEFAULT
     charge_on_solar_enabled: bool | None = None
     charge_on_solar_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    charge_on_solar_coordinator: TeslemetryChargeOnSolarCoordinator | None = None
 
     @property
     def polls_charge_limit(self) -> bool:
