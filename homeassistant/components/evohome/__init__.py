@@ -6,7 +6,6 @@ others.
 Note that the API used by this integration's client does not support cooling.
 """
 
-from dataclasses import dataclass
 import logging
 from typing import Final
 
@@ -34,7 +33,7 @@ from .const import (
     SCAN_INTERVAL_DEFAULT,
     SCAN_INTERVAL_MINIMUM,
 )
-from .coordinator import EvoAccountCoordinator, EvoLocationCoordinator
+from .coordinator import EvoAccountCoordinator, EvoData, EvoLocationCoordinator
 from .services import async_setup_services
 from .storage import TokenManager
 
@@ -57,14 +56,6 @@ CONFIG_SCHEMA: Final = probatio.Schema(
     },
     extra=probatio.ALLOW_EXTRA,
 )
-
-
-@dataclass
-class EvoData:
-    """Dataclass for storing evohome data."""
-
-    account: EvoAccountCoordinator
-    locations: list[EvoLocationCoordinator]
 
 
 async def _async_first_refresh(
@@ -98,6 +89,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
+    async_setup_services(hass)
+
     token_manager = TokenManager(
         hass,
         config[DOMAIN][CONF_USERNAME],
@@ -109,7 +102,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         _LOGGER,
         ec2.EvohomeClient(token_manager),
         name=f"{DOMAIN}_account_coordinator",
-        update_interval=config[DOMAIN][CONF_SCAN_INTERVAL],
+        update_interval=SCAN_INTERVAL_DEFAULT,  # scan_interval is only for locations
         client_v1=ec1.EvohomeClient(token_manager),
     )
     if not await _async_first_refresh(account_coord):
@@ -147,7 +140,5 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     for platform in (Platform.CLIMATE, Platform.BUTTON, Platform.WATER_HEATER):
         hass.async_create_task(async_load_platform(hass, platform, DOMAIN, {}, config))
-
-    async_setup_services(hass)
 
     return True
