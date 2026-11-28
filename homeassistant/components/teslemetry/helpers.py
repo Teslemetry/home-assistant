@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from aiohttp import ClientError
-from tesla_fleet_api.exceptions import TeslaFleetError
+from tesla_fleet_api.exceptions import InvalidToken, TeslaFleetError
 from tesla_fleet_api.tesla import EnergySiteRouter
 from tesla_fleet_api.tesla.bluetooth import TeslaBluetooth
 from tesla_fleet_api.tesla.powerwall import (
@@ -18,6 +18,8 @@ from tesla_fleet_api.tesla.powerwall import (
 from tesla_fleet_api.teslemetry import EnergySite, Vehicle
 from tesla_fleet_api.teslemetry.energysite import TeslemetryEnergySite
 
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_TOKEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -37,6 +39,30 @@ GATEWAY_OUT_OF_RANGE = 11
 
 class PowerwallKeyRejectedError(Exception):
     """Signal that the gateway refused a v1r-signed read with our RSA key."""
+
+
+@callback
+def async_expire_token(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Mark the stored access token expired so the next request refreshes it.
+
+    Used when the server rejects a token that HA's clock still thinks is valid,
+    for example after the host was suspended.
+    """
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, CONF_TOKEN: {**entry.data[CONF_TOKEN], "expires_at": 0}},
+    )
+
+
+async def async_call_with_token_refresh[_T](
+    hass: HomeAssistant, entry: ConfigEntry, call: Callable[[], Awaitable[_T]]
+) -> _T:
+    """Await an API call, retrying once with a refreshed token if it is rejected."""
+    try:
+        return await call()
+    except InvalidToken:
+        async_expire_token(hass, entry)
+    return await call()
 
 
 def gateway_issue_id(entry_id: str, site_id: int) -> str:
